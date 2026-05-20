@@ -1,0 +1,133 @@
+import { NextResponse } from "next/server";
+import { waitUntil } from "@vercel/functions";
+import crypto from "node:crypto";
+
+import { db } from "@/lib/db";
+import { render } from "@/lib/render";
+import { createVm, getJobStatus } from "@/lib/portal-client";
+import type { DeploymentRecord, FormSubmission } from "@/lib/types";
+
+export const dynamic = "force-dynamic";
+
+const POLL_INTERVAL_MS = 3000;
+const POLL_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
+
+export async function POST(request: Request) {
+  let body: FormSubmission;
+  try {
+    body = (await request.json()) as FormSubmission;
+  } catch {
+    return NextResponse.json({ error: "invalid JSON body" }, { status: 400 });
+  }
+
+  if (!body.secretaiApiKey || !body.anthropicApiKey) {
+    return NextResponse.json(
+      { error: "secretaiApiKey and anthropicApiKey are required" },
+      { status: 400 },
+    );
+  }
+
+  const deploymentId = crypto.randomUUID();
+  const gatewayToken = crypto.randomBytes(32).toString("hex");
+  const telegramEnabled = !!body.telegramEnabled;
+
+  const record: DeploymentRecord = {
+    deployment_id: deploymentId,
+    status: "submitted",
+    gateway_token: gatewayToken,
+    telegram_enabled: telegramEnabled,
+    telegram_bot_username: body.telegramBotUsername,
+    created_at: new Date().toISOString(),
+  };
+  await db.insert(record);
+
+  waitUntil(
+    handlePortalProvisioning({
+      deploymentId,
+      gatewayToken,
+      form: body,
+    }).catch(async (err) => {
+      await db.update(deploymentId, {
+        status: "failed",
+        error_message: err instanceof Error ? err.message : "unknown error",
+      });
+    }),
+  );
+
+  return NextResponse.json({ deployment_id: deploymentId });
+}
+
+async function handlePortalProvisioning(opts: {
+  deploymentId: string;
+  gatewayToken: string;
+  form: FormSubmission;
+}): Promise<void> {
+  const { deploymentId, gatewayToken, form } = opts;
+
+  await db.update(deploymentId, { status: "provisioning" });
+
+  const rendered = render({
+    anthropicApiKey: form.anthropicApiKey,
+    telegramBotToken: form.telegramEnabled ? form.telegramBotToken : undefined,
+    telegramChatId: form.telegramEnabled ? form.telegramChatId : undefined,
+    deploymentId,
+    gatewayToken,
+  });
+
+  const created = await createVm({
+    apiKey: form.secretaiApiKey,
+    name: `secret-agent-${deploymentId.split("-")[0]}`,
+    vmTypeId: process.env.SECRETVM_TYPE_ID || "default",
+    environment: "prod",
+    compose: rendered.compose,
+  });
+
+  if (!created.ok) {
+    await db.update(deploymentId, {
+      status: "failed",
+      error_message: `portal vm/create returned ${created.status}: ${(created.errorBody || "").slice(0, 200)}`,
+    });
+    return;
+  }
+
+  if (created.vmHostname) {
+    await db.update(deploymentId, { vm_id: created.vmId, vm_hostname: created.vmHostname });
+  } else {
+    await db.update(deploymentId, { vm_id: created.vmId });
+  }
+
+  if (!created.jobId) {
+    await db.update(deploymentId, {
+      status: "ready",
+      provisioned_at: new Date().toISOString(),
+    });
+    return;
+  }
+
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < POLL_TIMEOUT_MS) {
+    await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
+    const job = await getJobStatus({ apiKey: form.secretaiApiKey, jobId: created.jobId });
+    if (!job.ok) continue;
+    const status = (job.jobStatus || "").toLowerCase();
+    if (status === "completed" || status === "success" || status === "succeeded") {
+      await db.update(deploymentId, {
+        status: "ready",
+        provisioned_at: new Date().toISOString(),
+      });
+      return;
+    }
+    if (status === "failed" || status === "error") {
+      await db.update(deploymentId, {
+        status: "failed",
+        error_message: `portal background-job reported ${status}`,
+      });
+      return;
+    }
+  }
+
+  await db.update(deploymentId, {
+    status: "failed",
+    error_message: `provisioning timed out after ${Math.round(POLL_TIMEOUT_MS / 60000)} minutes`,
+  });
+}
