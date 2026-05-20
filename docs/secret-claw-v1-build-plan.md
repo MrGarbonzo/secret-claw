@@ -1,6 +1,6 @@
 # Secret Claw v1 Demo — Build Plan
 
-**Status:** Working document, May 19 2026 (v0.3)
+**Status:** Working document, May 19 2026 (v0.5)
 **Companion to:** `secret-claw-v1-demo-scope.md`
 **Purpose:** Define the engineering execution path from current state to "Internal testers have used the demo." Sequences the work, identifies dependencies, captures decisions that affect the build but not the product surface.
 
@@ -10,104 +10,66 @@
 
 What exists:
 
-- **Working deploy template** at `C:\dev\openclaw-byo-deploy\`. Validated end-to-end on `tomato-rat.vm.scrtlabs.com` (test deploy May 19). Renders OpenClaw + Anthropic Sonnet 4.6 + Telegram + two routines + welcome message into a single uploadable compose. Byte-deterministic rendering. Three SecretVM gotchas burned in (YAML folded-scalar handling, compose interpolation escaping, diagnostics-prometheus schema).
+- **Working deploy template** at `C:\dev\secret-claw\deploys\byo\`. Validated end-to-end on `tomato-rat.vm.scrtlabs.com` (test deploy May 19). Renders OpenClaw + Anthropic Sonnet 4.6 + Telegram + two routines + welcome message into a single uploadable compose. Byte-deterministic rendering of the template; deployment ID and gateway token are random per render.
+- **Clean product repo** at `C:\dev\secret-claw\` (committed at e549163, pushed to https://github.com/MrGarbonzo/secret-claw). Chunk 1 complete.
+- **Three SecretVM gotchas burned in** to FINDINGS.md (YAML folded-scalar handling, compose interpolation escaping, diagnostics-prometheus schema).
 - **Benchmark matrix** validating OpenClaw + Sonnet 4.6 at 100% reliability on supported tests, 13K input tokens per turn average. Documented at `C:\dev\agent-bench\agent-bench-records.md`.
-- **Two live SecretVM deploys** for reference: `amethyst-eel` (OpenClaw + qwen2.5:72b, production-shape) and `beige-ermine` (IronClaw + qwen2.5:72b, production-shape). Both stay running as comparison baselines.
-- **Validated SecretVM portal upload flow** for both single-service compose patterns and the simple-variant fallback.
-- **SecretAI portal API research** at `C:\dev\openclaw-byo-deploy\docs\secretvm-provisioning-research.md`. Confirms Pattern B is achievable: provisioning is a multipart HTTP POST to `/api/vm/create`, authenticated by a Keplr-signed NextAuth session cookie. No on-chain transaction. Move to `C:\dev\secret-claw\docs\` during Chunk 1.
+- **Two live SecretVM deploys** for reference: `amethyst-eel` and `beige-ermine`. Both stay running as comparison baselines.
+- **SecretAI portal API research** at `C:\dev\secret-claw\docs\secretvm-provisioning-research.md`. Confirms Pattern B is achievable: provisioning is a multipart HTTP POST to `/api/vm/create`.
+- **API-key auth path validated** by user (May 19): API keys can be generated in the SecretAI portal UI and used for `vm create` operations via `Authorization: Bearer <key>`.
 
 What doesn't exist:
 
-- A clean product repo with proper structure
 - The wizard frontend
-- A backend for storing wizard submissions and tracking deployment state
+- A backend for storing deployment records
+- The SecretAI API key validation pattern (lightweight authenticated call to confirm a pasted key works)
 - The Anthropic API key validation pattern (test call before accepting)
 - The Telegram credential validation pattern
-- A real test deploy of the simplified "Secret Agent" fixed-name template
-- The Keplr + portal auth integration (signature pattern is known; implementation is pending)
+- The deploy template's integration with the SecretAI portal API (current template renders a compose; the wizard will submit it via API)
 
 ## What "done" looks like for the demo build
 
-A crypto-native tester receives a URL to the wizard. They connect Keplr. They click through six screens. About five minutes later, their agent is deployed under their own SecretAI portal account, reachable both via the SecretVM-provided URL and (if they set it up) Telegram. The next morning, they get a news briefing. Multiple testers do this without the project owner's involvement.
+A tester receives a URL to the wizard. They go to the SecretAI portal, generate an API key, paste it into the wizard. They paste their Anthropic key. They set up Telegram (or skip). About five minutes later, their agent is deployed under their own SecretAI portal account, reachable both via the SecretVM-provided URL and (if they set it up) Telegram. The next morning, they get a news briefing. Multiple testers do this without the project owner's involvement.
 
 The build is done when this flow works end-to-end, reliably, and the owner isn't in the provisioning loop.
 
 ## Build sequence
 
-The work decomposes into four chunks. Order matters because each chunk produces what the next chunk depends on.
+The work decomposes into four chunks. Chunk 1 is complete. The remaining chunks are simpler than they were at v0.3 because the API-key auth path eliminated the Keplr handshake.
 
-### Chunk 1: Repo restructure and template refinement (Week 1)
+### Chunk 1: Repo restructure and template refinement ✓ DONE (May 19 2026)
 
-**Goal:** Move the working deploy template into a clean, proper repo structure. Simplify the template based on locked decisions. Add the deployment ID concept. Verify the simplified template still works. Move the SecretAI portal API research doc into the repo.
+Completed at commit e549163. Repo structure created, deploy template simplified ("Secret Agent" hardcoded, random gateway token, optional Telegram), validation passed. See repo README and v0.3 of this build plan for full details.
 
-**What gets built:**
+### Chunk 2: Wizard design + API-key validation prototype (Week 1-2)
 
-Create `C:\dev\secret-claw\` with the structure defined in the scope doc. Move (not copy) the contents of `C:\dev\openclaw-byo-deploy\` into `deploys/byo/`. Move the research doc to `docs/secretvm-provisioning-research.md`. After moving, delete `C:\dev\openclaw-byo-deploy\` — the new repo is the source of truth from this point.
-
-Simplifications to apply to the deploy template:
-
-- Fixed agent name "Secret Agent" — remove AGENT_NAME parameterization, hardcode throughout the workspace bootstrap files and the welcome message
-- Remove model parameterization — Sonnet 4.6 is fixed
-- Add DEPLOYMENT_ID as a new parameterized field. Generated by the render script (or the wizard, depending on Chunk 2's decision about browser-vs-backend rendering). Threaded through the compose as a Docker label, surfaced in the rendered output for the wizard backend to capture
-- Switch gateway token from SHA-256-derived to random (32-byte hex generated at render time, written to a known output file path for the wizard backend to read)
-
-New documentation to write in the repo root:
-
-- `README.md` — what the project is, where the pieces fit, links to scope, build plan, and research docs
-- `ARCHITECTURE.md` — how the wizard, deploy template, and SecretAI portal interact. Captures the Pattern B self-service provisioning flow at a higher level than the implementation details. References the research doc for portal-specific specifics.
-- `FINDINGS.md` — capture all SecretVM-related gotchas:
-  - The cyan-fox bind-mount failure (host paths that don't exist on SecretVM cause silent compose-up failures)
-  - YAML folded-scalar handling in SecretVM's compose rewriter (use configs.content: | pattern, not command: | with heredocs)
-  - Compose interpolation eating unescaped $VAR (escape with $$ or hardcode paths)
-  - diagnostics-prometheus schema rejecting .path override (enabled: true is the only valid config)
-  - Anthropic API key at rest in compose file (inside TEE attestation boundary; defensible privacy story but worth noting explicitly)
-- `docs/runbook-byo.md` — operations runbook. With Pattern B, this is much smaller than the original "manual provisioning runbook." It covers troubleshooting deploys that fail post-provisioning, not the provisioning itself (since the wizard does that). Common deploy issues and how to diagnose them.
-- `docs/troubleshooting.md` — common failure modes and fixes (init container issues, gateway startup failures, Telegram pairing issues)
-
-Placeholders to create:
-
-- `deploys/secret/README.md` — "Coming when qwen3.6:35b-a3b-bf16 is hosted on SecretAI in production-suitable configuration."
-- `wizard/` empty directory with a README.md placeholder
-- `backend/` empty directory with a README.md placeholder
-
-Validation:
-
-After the restructure, render a test config from the new location and provision a fresh SecretVM (using the same SecretVM portal flow that's been validated). Confirm the simplified template (no AGENT_NAME parameter, "Secret Agent" hardcoded) deploys successfully and the welcome message references "Secret Agent" correctly. This is the validation that the simplification didn't break anything.
-
-**Estimated time:** Half a day of Claude Code work plus a few hours of test-deploy validation.
-
-**Risks:** Low. The deploy template is already working; this is restructuring and simplification. The main risk is that something subtle changes during the move and the deploy stops working — mitigated by the explicit validation step.
-
-### Chunk 2: Wizard design + Keplr/portal integration prototype (Week 1-2)
-
-**Goal:** Design the six-screen wizard flow in enough detail that Chunk 3's frontend build is unambiguous. Prototype the Keplr + SecretAI portal auth handshake to confirm the integration works before committing to it in the full frontend.
+**Goal:** Design the six-screen wizard flow in enough detail that Chunk 3's frontend build is unambiguous. Verify the SecretAI portal API works as documented with a real API key.
 
 **What gets produced:**
-
-This is partly chat-iterative work with Claude (design conversation) and partly focused Claude Code work (auth prototype). The outputs:
 
 `C:\dev\secret-claw\docs\wizard-design.md` covering:
 - Each screen's layout, copy, validation rules, error states
 - Visual style direction (deliberately plain Stripe-style for the demo — no brand commitment)
-- The Keplr connection flow and error handling (wallet not installed, user rejects, wrong network)
-- The portal auth handshake UX (Keplr signature prompt explanation, "we're signing you in" moment)
+- The SecretAI API key entry flow (clear walkthrough of where to get one, validation feedback, error states for invalid/expired keys)
 - The Anthropic API key validation flow (real-time test call, latency expectations, error states)
 - The Telegram setup walkthrough (screenshots of BotFather steps, token paste UX, skip flow)
 - The provisioning screen behavior (polling cadence, status updates, what to show during the 5-minute wait)
-- The completion screen layout (URL prominent, wallet address shown, next-steps guidance)
+- The completion screen layout (URL prominent, next-steps guidance)
 - Mobile responsive behavior
 - The browser-vs-backend compose rendering decision (settled during this chunk)
 
-A working Keplr + portal auth prototype at `C:\dev\secret-claw\wizard/prototypes/auth/`:
-- Standalone HTML page that connects Keplr, asks user to sign the auth challenge, posts to the portal's `/api/auth/callback/keplr` endpoint, receives session cookie, makes an authenticated GET to `/api/auth/session` to confirm the session is real
-- Validates the portal accepts our auth flow end-to-end before we build the rest of the wizard around it
-- Code becomes reusable in the actual frontend build
+A small API-validation prototype:
+- Standalone HTML page or curl-equivalent that uses a real SecretAI API key
+- Validates: `GET /api/auth/session` (or equivalent) returns ok with the bearer token
+- Validates: `POST /api/vm/create` with a minimal compose actually provisions a VM
+- Validates: `GET /api/background-job/<jobId>` polling works with bearer auth
+- Validates: the resulting VM hostname and details can be read back
 
-**Estimated time:** 2-3 days. The design conversation is maybe a day of focused chat. The auth prototype is 1-2 days of Claude Code work.
+This is risk mitigation, not full prototype work. Maybe 2-4 hours of focused work to confirm the documented API actually behaves as expected from a browser context (or a Node script if browser CORS for bearer-token GETs is somehow restricted, though that would be unusual).
 
-**Risks:** Medium. The design conversation is well-understood territory. The auth prototype is where unknowns might surface — specifically whether the portal's CORS configuration permits our origin, what the auth challenge message format actually is, whether the session cookie's SameSite settings interact correctly with cross-origin requests. The research doc covered the architecture; the prototype validates the implementation.
+**Estimated time:** 1-2 days. The design conversation is a day of focused chat. The API validation is hours.
 
-If the prototype reveals blockers (CORS won't allow our origin, cookie semantics force same-origin hosting, etc.), Chunk 2 produces a finding that informs Chunk 3's architecture rather than blocking it. The fallback patterns (popup-redirect auth, hosting on `*.scrtlabs.com` subdomain) are documented in the research doc and can be activated.
+**Risks:** Low. The API key path is well-trodden (it's the same path the portal's Swagger UI uses, per the research doc). The primary remaining unknown is what specific endpoint to use for "is this API key valid?" — a small empirical question.
 
 ### Chunk 3: Wizard frontend build (Week 2-3)
 
@@ -117,73 +79,79 @@ If the prototype reveals blockers (CORS won't allow our origin, cookie semantics
 
 A Next.js application in `C:\dev\secret-claw\wizard\` deployed to Vercel. Stack choices:
 
-- Framework: Next.js (App Router)
+- Framework: Next.js (App Router) — required, not optional. The wizard needs server-side API routes to proxy SecretAI portal calls because the portal serves no CORS headers (empirical Chunk 2 finding; see `wizard/prototypes/api-validation/FINDINGS.md`).
 - Styling: Tailwind CSS, system fonts
 - Form handling: React Hook Form or similar
-- Keplr integration: `@cosmos-kit/react` or direct `window.keplr` access; the auth prototype from Chunk 2 informs this choice
-- HTTP client: native fetch with `credentials: "include"` for portal calls
+- HTTP client: native fetch from the browser to same-origin `/api/portal/*` routes; the route handlers use native fetch from the server to `https://secretai.scrtlabs.com` with the user-supplied bearer token attached
 - State: minimal — wizard state held in memory until submission
+
+**Next.js API-route proxy (definite component):** the browser cannot call the SecretAI portal directly. The wizard ships with same-origin proxy routes that forward portal calls server-side. Concretely:
+
+- `POST /api/portal/validate-key` — accepts an API key in the request body, calls `GET https://secretai.scrtlabs.com/api/vm/instances` with `Authorization: Bearer <key>`, returns `{ valid: true, vmCount: N }` on 200 or `{ valid: false }` on 401
+- `POST /api/portal/vm-create` — accepts the wizard inputs (API key + Anthropic key + optional Telegram creds), renders the compose server-side (see below), submits `POST /api/vm/create` to the portal as multipart with the bearer token, returns `{ vmId, jobId }`
+- `GET /api/portal/job-status/[jobId]` — accepts the API key in a request header, polls `GET https://secretai.scrtlabs.com/api/background-job/<jobId>`, returns the upstream status
+- `GET /api/portal/templates` (optional, if used for screen 1) — calls `GET https://secretai.scrtlabs.com/api/templates`, returns the upstream response
+
+The bearer token never persists in the proxy. Each route is single-hop: receive token in request → attach to upstream → return upstream response → forget. No logging of credentials.
 
 The frontend implements:
 
 - Six screen routes with proper navigation
-- Keplr connection (handle wallet-not-installed, user-rejects, wrong-network cases)
-- SecretAI portal auth handshake (CSRF token retrieval, Keplr signature, callback POST)
+- SecretAI API key validation via `POST /api/portal/validate-key`
 - Form validation matching the design doc
-- Real-time API key validation (test call to Anthropic before accepting)
+- Real-time API key validation for Anthropic (test call before accepting)
 - Real-time Telegram credential validation (getMe call to Telegram before accepting)
-- Compose template rendering (browser-side or via backend call, depending on Chunk 2's decision)
-- Multipart submission to SecretAI portal's `/api/vm/create`
-- Polling `/api/background-job/<jobId>` for provisioning status
+- Multipart submission to the portal via `POST /api/portal/vm-create` (the proxy route renders the compose server-side from the user inputs)
+- Polling `GET /api/portal/job-status/[jobId]` for provisioning status
 - Mobile responsive layouts
 
-The `getCurrentUser()` abstraction lives here — returns `{walletAddress, sessionCookie, deploymentId: <newly-generated-uuid>}` after Keplr connection + portal auth. Swappable for real auth later when the production auth model is decided. Used in any place the code needs to know "who is this submission for."
+The `getCurrentUser()` abstraction lives here — returns `{deploymentId: <newly-generated-uuid>, secretAiApiKey}` after the user pastes their key. Swappable for production auth later. Used in any place the code needs to know "who is this submission for."
 
-**Estimated time:** 5-7 days of focused Claude Code work. The Keplr + portal integration adds 2-3 days over what a Pattern A frontend would have needed. Plus design iteration time as edge cases surface during build.
+**Estimated time:** 4-5 days of focused Claude Code work. Significantly less than the v0.3 estimate because there's no Keplr integration to build.
 
-**Risks:** Medium. Web frontends have a lot of small decisions that compound. The biggest risks are the visual polish ceiling (Claude Code can produce a working wizard quickly but polished requires careful attention) and the Keplr UX (signature prompts feel scary if not well-explained). Plan for an explicit polish pass after the functional build.
+**Risks:** Medium. Web frontends have a lot of small decisions that compound. The biggest risk is the visual polish ceiling — Claude Code can produce a working wizard quickly but a *polished* one requires careful attention. Plan for an explicit polish pass after the functional build.
 
 ### Chunk 4: Backend deployment record + observability (Week 3)
 
-**Goal:** A minimal backend that holds wizard submissions for the project owner's reference. Significantly smaller than the originally-planned wizard-of-oz backend, because the wizard now provisions directly via the portal.
+**Goal:** A minimal backend that holds deployment records for the project owner's reference. Same as v0.3 but worth restating since the architecture has settled.
 
 **What gets built:**
 
-A Supabase project (or equivalent) backing the wizard. Tables needed:
+A Supabase project (or equivalent) backing the wizard. Table needed:
 
-- `deployments` — wizard submissions. Fields: `deployment_id` (uuid), `wallet_address`, `vm_id` (returned by portal), `vm_hostname` (returned by portal), `status` (submitted/provisioning/ready/failed), `created_at`, `provisioned_at`, `error_message`, `telegram_enabled` (boolean), `metadata` (jsonb for non-sensitive details)
+- `deployments` — wizard submissions. Fields: `deployment_id` (uuid), `vm_id` (returned by portal), `vm_hostname` (returned by portal), `status` (submitted/provisioning/ready/failed), `created_at`, `provisioned_at`, `error_message`, `telegram_enabled` (boolean), `metadata` (jsonb for non-sensitive details)
 
-Note what's NOT in this table: API keys, Telegram bot tokens, anything else sensitive. Those go directly from the wizard to the portal in the compose submission and are never persisted in our backend. This is a core security property of Pattern B and worth preserving.
+Note what's NOT in this table: SecretAI API keys, Anthropic API keys, Telegram bot tokens, anything sensitive. Those go directly from the wizard to the portal in the compose submission and are never persisted in our backend. This is a core security property worth preserving.
 
 API endpoints the wizard calls:
 
 - `POST /api/validate-anthropic-key` — tests an Anthropic key with a one-token call, returns ok or invalid (lightweight backend service; doesn't store the key)
 - `POST /api/validate-telegram` — tests a Telegram bot token with a getMe call, returns ok with bot username, or invalid
-- `POST /api/record-deployment` — accepts a deployment record (wallet, deployment_id, expected status), creates the database row
+- `POST /api/record-deployment` — accepts a deployment record (deployment_id, expected status), creates the database row
 - `PATCH /api/deployment-status/:deployment_id` — updates the deployment record as the wizard's provisioning progresses
-- `GET /api/deployment-status/:deployment_id` — returns current state; not really needed if the wizard maintains state in memory, but useful for owner observability
+- `GET /api/deployment-status/:deployment_id` — returns current state; useful for owner observability
+
+SecretAI API key validation does NOT have a backend endpoint — that validation happens browser-side by hitting the SecretAI portal directly. This keeps user credentials out of our infrastructure entirely.
 
 The owner-side observability includes:
-- A read-only dashboard showing recent deployments (wallet, status, hostname, timestamp)
-- Webhook or email notification on failed deployments so the owner knows to investigate
+- A read-only dashboard showing recent deployments (status, hostname, timestamp)
+- Webhook or email notification on failed deployments
 
-The runbook in Chunk 1 references this dashboard for diagnosing issues. With Pattern B, there's no "manual provisioning steps" runbook — provisioning is automated. What remains is troubleshooting when something goes wrong.
+**Estimated time:** 1-2 days of Claude Code work.
 
-**Estimated time:** 1-2 days of Claude Code work. Significantly smaller than the originally-planned Chunk 4 (which had to handle manual provisioning).
-
-**Risks:** Low. This is straightforward backend work with no novel integrations.
+**Risks:** Low. Straightforward backend work.
 
 ### Chunk 5: End-to-end testing and tester handoff (Week 3-4)
 
-**Goal:** Verify the full flow works from a user's perspective. Hand the demo to Alex and other crypto-native testers.
+**Goal:** Verify the full flow works from a user's perspective. Hand the demo to Alex and other testers.
 
 **What gets done:**
 
-You test the full flow as if you were a tester. Connect Keplr, complete the wizard, watch provisioning, see the agent come up.
+You test the full flow as if you were a tester. Generate a fresh SecretAI API key, complete the wizard, watch provisioning, see the agent come up.
 
 Fix every rough edge you find. Pay specific attention to:
 
-- The Keplr signature prompt and surrounding explanation (this is the moment most likely to confuse testers)
+- The "get your SecretAI API key" walkthrough (this is the new step that didn't exist in Pattern A; testers will be confused if it's unclear)
 - Latency expectations during validation
 - Error message quality
 - The completion screen content
@@ -195,74 +163,70 @@ Then send Alex (and others) the wizard URL. Be available over the first hour in 
 
 **Estimated time:** 2-3 days of testing and polish, plus the tester handoff sessions.
 
-**Risks:** Low operationally, high product-wise. Same as before — biggest risk isn't technical breakage, it's a tepid reaction.
+**Risks:** Low operationally, high product-wise. The biggest risk isn't technical breakage — it's a tepid reaction.
 
 ## Decisions made during the build
 
-These get added to the version history as they happen. The doc is a running log.
-
 ### v0.1 — May 19 2026
-
-Initial build plan. Sequence locked: restructure → design → frontend → backend → handoff. Wizard-of-oz provisioning accepted for demo. Random gateway tokens, deterministic deployment IDs. Invitation codes as access control. Vercel hosting, Supabase backend, no custom domain for demo.
+Initial build plan. Four-chunk sequence locked. Wizard-of-oz provisioning, anonymous wizard, invitation code access.
 
 ### v0.2 — May 19 2026
-
-Keplr wallet auth replaces invitation codes for internal testing access. Auth abstraction designed to remain swappable for whatever production model is chosen post-demo.
+Keplr wallet auth replaces invitation codes for internal testing access.
 
 ### v0.3 — May 19 2026
+Architecture pivoted to Pattern B (self-service provisioning). Wizard-of-oz manual provisioning eliminated. Chunk 4 becomes much smaller.
 
-Architecture pivoted to Pattern B (self-service provisioning) based on research confirming SecretAI portal exposes a multipart HTTP API. Wizard-of-oz manual provisioning eliminated. Backend (Chunk 4) becomes much smaller — just deployment records + owner observability, no provisioning. Chunk 3 grows by 2-3 days for Keplr + portal auth integration. Chunk 2 gains an auth prototype as risk-mitigation before full frontend build.
+### v0.4 — May 19 2026
+Architecture simplified again: API-key bearer auth instead of Keplr-in-wizard signing. User generates the key in the SecretAI portal once, pastes into the wizard. Confirmed: API keys can be generated in the portal UI, and they work for `vm create` operations. Chunk 2 shrinks from "Keplr handshake prototype" to "validate documented API works as expected." Chunk 3 shrinks by ~3 days because there's no Keplr integration. Chunk 1 completed at commit e549163.
 
 ## Decisions deferred to during or after the build
 
-**Browser-side vs backend-side compose rendering.** Settled during Chunk 2 design. Browser-side keeps user credentials entirely in their session and never on your infrastructure. Backend-side simplifies frontend complexity. Default lean: browser-side (better privacy story, fewer infra dependencies).
+**Browser-side vs backend-side compose rendering.** **Settled at v0.5: backend-side.** Chunk 2's CORS finding forces a Next.js proxy regardless, so the cost calculus changed — we now have a server-side path that has to exist anyway. Frontend collects inputs; `POST /api/portal/vm-create` receives them, renders the compose, and posts to the portal in one server-side call. The compose YAML never leaves the server before being submitted; the user's bearer token still doesn't persist beyond one request.
 
-**Cosmos-kit vs direct Keplr.** Settled during Chunk 2 prototype. `@cosmos-kit/react` is more conventional and handles edge cases (wallet switching, Ledger users). Direct `window.keplr` is more minimal. Pick based on what the prototype shows works cleanly.
+**Specific SecretAI portal endpoint for API-key validation.** **Settled at v0.5: `GET /api/vm/instances` with `Authorization: Bearer <key>`.** Confirmed empirically — returns 200 with a VM list for valid keys, structured 401 for invalid/missing. `/api/auth/session` returns `{}` 200 regardless of bearer-token state (NextAuth quirk) and is unusable. See `wizard/prototypes/api-validation/FINDINGS.md` §2.
 
-**Vercel vs alternative hosting.** Default is Vercel. If something pushes against that during Chunk 3 (cost, integration with the backend, CORS requirements with the SecretAI portal), reconsider.
+**Vercel vs alternative hosting.** Default is Vercel.
 
-**Supabase vs Postgres vs simpler alternatives.** Default is Supabase. Since we're not storing sensitive credentials anymore (Pattern B eliminated that need), the encryption-at-rest concerns from earlier versions don't apply. Plain Supabase tables are fine.
+**Supabase vs Postgres vs simpler alternatives.** Default is Supabase. Since we're not storing sensitive credentials, plain Supabase tables are fine.
 
-**How to handle a tester whose deployment fails partway through.** With Pattern B, the SecretAI portal returns errors as background-job statuses. The wizard surfaces these to the user and updates the deployment record. The tester can retry by running the wizard again. No "manual recovery" path needed.
+**How to handle a tester whose deployment fails partway through.** With Pattern B + API keys, the portal returns errors as background-job statuses. The wizard surfaces these and the tester can retry by running the wizard again.
 
 ## What this build plan deliberately doesn't include
 
-- **Automated SecretAI portal admin operations.** The wizard provisions VMs but doesn't tear them down or manage them. Users go to the portal directly for those operations.
-- **Production-grade observability.** No Sentry, no Datadog, no analytics. Console logs and Supabase dashboard suffice.
-- **Multi-environment setup.** No staging environment. Vercel preview deployments serve as staging.
-- **CI/CD pipelines.** No GitHub Actions, no automated tests. Manual testing.
-- **Comprehensive error handling.** Errors in normal use get handled; edge-case errors get a generic "something went wrong" with contact info.
-- **Database migrations.** Supabase tables created once. Schema changes during build happen by dropping and recreating.
-- **Backup or disaster recovery.** If the backend loses data, deployments lose tracking but VMs keep running. Acceptable for the demo.
-- **Audit logging.** No detailed logs of who did what when. Beyond the deployment records themselves.
+- **Automated SecretAI portal admin operations.** Wizard provisions but doesn't tear down or manage. Users go to the portal directly.
+- **Production-grade observability.** Console logs and Supabase dashboard suffice.
+- **Multi-environment setup.** Vercel preview deployments serve as staging.
+- **CI/CD pipelines.** Manual testing.
+- **Comprehensive error handling.** Edge-case errors get a generic "something went wrong" message.
+- **Database migrations.** Drop-and-recreate during build.
+- **Backup or disaster recovery.** Acceptable for the demo.
 
 ## Dependencies and ordering
 
-- **Chunk 1 blocks Chunk 3.** The wizard's compose rendering uses the deploy template from Chunk 1.
-- **Chunk 2 blocks Chunk 3.** The frontend implements the design. The auth prototype validates the integration approach.
-- **Chunk 3 and Chunk 4 can run in parallel** once Chunk 2 settles the API contract between them. Define the contract early; build in parallel.
+- **Chunk 2 blocks Chunk 3.** The frontend implements the design. The API validation prototype confirms the integration approach.
+- **Chunk 3 and Chunk 4 can run in parallel** once Chunk 2 settles the API contract between them.
 - **Chunk 5 depends on Chunks 1-4.**
 
 ## Out-of-band work that happens in parallel
 
-These don't block the build but should happen during it:
+**Branding direction conversation with the team.** Triggered whenever Alex is available.
 
-**Branding direction conversation with the team.** Triggered whenever Alex is available. Captures what the eventual product brand looks like. Doesn't affect the demo but informs what comes after.
+**SecretAI conversation about qwen3.6.** Confirm timeline for qwen3.6 hosting. Ask explicitly for jedi-style hosting configuration.
 
-**SecretAI conversation about qwen3.6.** Confirm timeline for qwen3.6 hosting. Ask explicitly for jedi-style hosting configuration (single instance, no eviction, predictable latency). Necessary for the eventual Secret tier.
+**Privacy explainer copy.** Drafted iteratively.
 
-**Privacy explainer copy.** Drafted iteratively, ideally with feedback from someone who isn't deep in the technical details. Eventually surfaces in the wizard as a privacy explainer page; not in v0 demo scope but worth drafting in parallel.
-
-**v1 product scope document.** The successor to this demo scope. Captures what the actual product is. Drafted after Alex has used the demo and the open decisions are answered.
+**v1 product scope document.** The successor to this demo scope. Drafted after Alex has used the demo.
 
 ## Working repository
 
-`C:\dev\secret-claw\`
+`C:\dev\secret-claw\` (committed at e549163, pushed to https://github.com/MrGarbonzo/secret-claw)
 
 Structure as defined in the scope doc.
 
 ## Version history
 
-- **v0.1 (May 19 2026):** Initial build plan. Four-chunk sequence locked. Wizard-of-oz provisioning, anonymous wizard, invitation code access. Companion to scope doc v0.1.
-- **v0.2 (May 19 2026):** Keplr auth pivot reflected. Chunk 3 gains wallet connection; Chunk 4 gains wallet allowlist. Otherwise unchanged.
-- **v0.3 (May 19 2026):** Pattern B self-service provisioning architecture confirmed by research. Chunk 2 gains an auth prototype subtask. Chunk 3 grows for Keplr + portal integration. Chunk 4 shrinks significantly — no manual provisioning, just deployment records + observability. Companion to scope doc v0.3.
+- **v0.1 (May 19 2026):** Initial build plan. Anonymous wizard, invitation codes, wizard-of-oz provisioning.
+- **v0.2 (May 19 2026):** Keplr auth pivot reflected.
+- **v0.3 (May 19 2026):** Pattern B self-service provisioning architecture confirmed.
+- **v0.4 (May 19 2026):** API-key auth replaces Keplr-in-wizard signing. Chunk 1 completed. Chunks 2-3 simplified.
+- **v0.5 (May 19 2026):** Chunk 2 Part 1 (API validation prototype) complete, findings folded in. `/api/vm/instances` confirmed as validation endpoint. Next.js API-route proxy now a definite Chunk 3 component (portal serves no CORS, so direct browser calls are impossible). Compose-rendering decision settled: backend-side. No user-identity display possible. See commit 360e7ca for the prototype and `wizard/prototypes/api-validation/FINDINGS.md` for empirical detail.

@@ -5,6 +5,24 @@
 predicts, so the wizard's auth assumption is empirically grounded before
 Chunk 3's frontend build.
 
+## TL;DR — headline findings (full detail in `FINDINGS.md`)
+
+- **`GET /api/vm/instances`** is the API-key validator (200 for valid keys
+  with a VM list; structured 401 for invalid/missing). `/api/auth/session`
+  is unusable — returns `{}` 200 regardless of bearer-token state.
+- **No identity is exposed to bearer callers** — `ownerSub`, `teamId`,
+  `userRole` all null; no `/api/me`-style endpoint exists. The wizard
+  cannot display "Connected as `<wallet>`".
+- **The portal does not implement CORS preflight handling.** Empirical
+  test via headless Chrome: every cross-origin browser request is blocked
+  before it leaves the network stack (no `Access-Control-Allow-Origin`
+  ever returned). **Chunk 3 must include a Next.js API-route proxy for
+  all portal calls.** The browser talks same-origin to `wizard/app/api/portal/*`;
+  the proxy attaches the user's bearer token and forwards to
+  `https://secretai.scrtlabs.com` server-side, never persisting the token.
+- **`x-swagger: true`** is decorative — optional and dropped from the
+  recommended request shape.
+
 ## What this validates
 
 The wizard's planned auth model is:
