@@ -1,0 +1,16 @@
+{
+  "name": "api-validation",
+  "version": "1.0.0",
+  "description": "**Chunk 2 deliverable, Secret Claw v1 demo.** Confirms the SecretAI portal's `Authorization: Bearer <api_key>` path works the way the research doc predicts, so the wizard's auth assumption is empirically grounded before Chunk 3's frontend build.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "puppeteer": "^25.0.4"
+  }
+}

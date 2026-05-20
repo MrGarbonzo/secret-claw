@@ -19,6 +19,10 @@ gateway_token.txt
 .env.local
 *.local
 
+# Prototype run outputs (may include observed response bodies)
+**/cors-test-results.json
+**/api-test-results.json
+
 # Python
 __pycache__/
 *.pyc

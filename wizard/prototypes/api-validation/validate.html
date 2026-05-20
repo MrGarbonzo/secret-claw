@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>SecretAI portal API-key validator (browser CORS test)</title>
+<style>
+  body { font: 14px/1.45 system-ui, sans-serif; max-width: 880px; margin: 2rem auto; padding: 0 1rem; }
+  h1 { font-size: 1.1rem; margin-bottom: 0.25rem; }
+  .muted { color: #666; }
+  input[type="text"], input[type="password"] { width: 100%; padding: 0.5rem; font-family: ui-monospace, monospace; font-size: 13px; box-sizing: border-box; }
+  button { padding: 0.5rem 1rem; cursor: pointer; }
+  button:disabled { cursor: wait; opacity: 0.6; }
+  .result { margin-top: 1.5rem; }
+  .endpoint { border: 1px solid #ddd; border-radius: 4px; padding: 0.75rem 1rem; margin-bottom: 0.75rem; }
+  .endpoint h2 { font-size: 0.95rem; margin: 0 0 0.5rem; font-family: ui-monospace, monospace; }
+  .row { display: flex; gap: 1rem; flex-wrap: wrap; }
+  .col { flex: 1; min-width: 320px; }
+  .ok { color: #0a7d2a; }
+  .bad { color: #b30000; }
+  pre { background: #f6f6f6; padding: 0.5rem; overflow-x: auto; font-size: 12px; margin: 0.25rem 0; max-height: 14rem; }
+  label { display: block; margin: 0.75rem 0 0.25rem; font-weight: 600; }
+</style>
+</head>
+<body>
+
+<h1>SecretAI portal API-key validator</h1>
+<p class="muted">
+  Browser counterpart to <code>validate.mjs</code>. Confirms the same calls
+  work cross-origin from a real browser (which is what the wizard frontend
+  will be), not just from Node. If anything fails with a CORS error, that's
+  the finding — open devtools to see it.
+</p>
+<p class="muted">
+  Serve this locally (<code>python -m http.server 8765</code>) rather than
+  opening as <code>file://</code> — the null origin gives misleading results.
+</p>
+
+<label for="apikey">SecretAI API key</label>
+<input id="apikey" type="password" autocomplete="off" placeholder="sk-...">
+
+<label for="baseurl">Portal base URL</label>
+<input id="baseurl" type="text" value="https://secretai.scrtlabs.com">
+
+<p style="margin-top: 1rem;">
+  <button id="run">Run validation</button>
+  <button id="clear">Clear results</button>
+</p>
+
+<div class="result" id="results"></div>
+
+<script type="module">
+const ENDPOINTS = [
+  { name: "auth.session",   path: "/api/auth/session",  note: "candidate validate-key endpoint" },
+  { name: "vm.instances",   path: "/api/vm/instances",  note: "lists user's VMs; definitely needs auth" },
+  { name: "templates",      path: "/api/templates",     note: "may not require auth; useful to compare" },
+];
+
+function shapeOf(value, depth = 0) {
+  if (value === null) return "null";
+  if (Array.isArray(value)) {
+    if (value.length === 0) return "[]";
+    return `[${shapeOf(value[0], depth + 1)} × ${value.length}]`;
+  }
+  if (typeof value === "object") {
+    const keys = Object.keys(value);
+    if (depth > 0) return `{${keys.length} keys}`;
+    return `{ ${keys.join(", ")} }`;
+  }
+  return typeof value;
+}
+
+async function callEndpoint({ baseUrl, path, apiKey, withSwagger }) {
+  const headers = { Authorization: `Bearer ${apiKey}`, Accept: "application/json" };
+  if (withSwagger) headers["x-swagger"] = "true";
+
+  const t0 = performance.now();
+  try {
+    const res = await fetch(`${baseUrl}${path}`, { method: "GET", headers });
+    const elapsed = Math.round(performance.now() - t0);
+    const text = await res.text();
+    let parsed = null, parseError = null;
+    try { parsed = text ? JSON.parse(text) : null; } catch (e) { parseError = e.message; }
+    return {
+      ok: res.ok,
+      status: res.status,
+      statusText: res.statusText,
+      contentType: res.headers.get("content-type") || "",
+      elapsedMs: elapsed,
+      parsed,
+      parseError,
+      bodyPreview: text.length > 500 ? text.slice(0, 500) + "..." : text,
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      transportError: err.message || String(err),
+      elapsedMs: Math.round(performance.now() - t0),
+    };
+  }
+}
+
+function renderResult(r) {
+  if (r.transportError) {
+    return `<pre class="bad">TRANSPORT/CORS ERROR after ${r.elapsedMs}ms — ${r.transportError}\n(Check the browser devtools console for the precise CORS message.)</pre>`;
+  }
+  const okClass = r.ok ? "ok" : "bad";
+  const shape = r.parsed !== null ? shapeOf(r.parsed) : "(not JSON)";
+  return `
+    <div class="${okClass}">HTTP ${r.status} ${r.statusText} — ${r.elapsedMs}ms</div>
+    <div class="muted">content-type: ${r.contentType || "(none)"}</div>
+    <div class="muted">shape: ${shape}</div>
+    ${r.parseError ? `<div class="bad">parse-error: ${r.parseError}</div>` : ""}
+    <pre>${escapeHtml(r.bodyPreview)}</pre>
+  `;
+}
+
+function escapeHtml(s) {
+  return String(s)
+    .replaceAll("&", "&amp;").replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;").replaceAll('"', "&quot;");
+}
+
+document.getElementById("clear").addEventListener("click", () => {
+  document.getElementById("results").innerHTML = "";
+});
+
+document.getElementById("run").addEventListener("click", async () => {
+  const apiKey = document.getElementById("apikey").value.trim();
+  const baseUrl = document.getElementById("baseurl").value.trim().replace(/\/$/, "");
+  const results = document.getElementById("results");
+
+  if (!apiKey) { alert("Paste an API key first."); return; }
+  if (!baseUrl) { alert("Need a base URL."); return; }
+
+  document.getElementById("run").disabled = true;
+  results.innerHTML = `<p class="muted">Origin: <code>${escapeHtml(window.location.origin)}</code>. Running ${ENDPOINTS.length} endpoints × 2 header variants…</p>`;
+
+  for (const ep of ENDPOINTS) {
+    const block = document.createElement("div");
+    block.className = "endpoint";
+    block.innerHTML = `<h2>${ep.name} <span class="muted">— GET ${ep.path}</span></h2>
+                       <div class="muted">${ep.note}</div>
+                       <div class="row">
+                         <div class="col"><strong>with x-swagger: true</strong><div data-slot="with">…</div></div>
+                         <div class="col"><strong>without x-swagger</strong><div data-slot="without">…</div></div>
+                       </div>`;
+    results.appendChild(block);
+
+    const withSwagger = await callEndpoint({ baseUrl, path: ep.path, apiKey, withSwagger: true });
+    block.querySelector('[data-slot="with"]').innerHTML = renderResult(withSwagger);
+
+    const withoutSwagger = await callEndpoint({ baseUrl, path: ep.path, apiKey, withSwagger: false });
+    block.querySelector('[data-slot="without"]').innerHTML = renderResult(withoutSwagger);
+  }
+
+  document.getElementById("run").disabled = false;
+});
+</script>
+
+</body>
+</html>
