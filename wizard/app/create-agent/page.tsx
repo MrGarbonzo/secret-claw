@@ -416,11 +416,26 @@ export default function CreateAgentPage() {
             </div>
 
             {telegramChoice === "enabled" ? (
-              <div className="mt-4 grid grid-cols-1 gap-3">
-                <label className="flex flex-col gap-1">
+              <div className="mt-4 grid grid-cols-1 gap-5">
+                <div className="flex flex-col gap-2">
                   <span className="text-[11px] uppercase tracking-wider text-portal-muted">
-                    Bot token
+                    Step 1 — Bot token
                   </span>
+                  <p className="text-[11px] leading-relaxed text-portal-muted">
+                    Message{" "}
+                    <a
+                      href="https://t.me/BotFather"
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-portal-accent hover:underline"
+                    >
+                      @BotFather
+                    </a>{" "}
+                    on Telegram, send{" "}
+                    <code className="font-mono text-portal-text">/newbot</code>, follow the
+                    prompts. BotFather replies with a token like{" "}
+                    <code className="font-mono text-portal-text">1234567890:ABC-def…</code>.
+                  </p>
                   <FormInput
                     type="text"
                     monospace
@@ -433,11 +448,32 @@ export default function CreateAgentPage() {
                     onBlur={() => void validateTelegram()}
                     invalid={telegramState.kind === "invalid"}
                   />
-                </label>
-                <label className="flex flex-col gap-1">
+                </div>
+
+                <div className="flex flex-col gap-2">
                   <span className="text-[11px] uppercase tracking-wider text-portal-muted">
-                    Chat ID
+                    Step 2 — Chat ID
                   </span>
+                  <p className="text-[11px] leading-relaxed text-portal-muted">
+                    Open Telegram, find your new bot, send it any message
+                    (e.g. <code className="font-mono text-portal-text">/start</code>), then open
+                    this URL in a new tab and look for{" "}
+                    <code className="font-mono text-portal-text">chat.id</code> in the JSON:
+                  </p>
+                  {botToken.trim().includes(":") ? (
+                    <a
+                      href={`https://api.telegram.org/bot${encodeURIComponent(botToken.trim())}/getUpdates`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="block break-all rounded-md border border-portal-border bg-portal-bg px-3 py-2 font-mono text-[11px] text-portal-accent transition-colors hover:border-portal-accent hover:underline"
+                    >
+                      https://api.telegram.org/bot{botToken.trim()}/getUpdates ↗
+                    </a>
+                  ) : (
+                    <span className="block rounded-md border border-dashed border-portal-border bg-portal-bg px-3 py-2 font-mono text-[11px] text-portal-mutedDim">
+                      Paste your bot token above to generate this link
+                    </span>
+                  )}
                   <FormInput
                     type="text"
                     monospace
@@ -450,13 +486,7 @@ export default function CreateAgentPage() {
                     onBlur={() => void validateTelegram()}
                     invalid={telegramState.kind === "invalid"}
                   />
-                </label>
-                <p className="text-[11px] text-portal-muted">
-                  Message @BotFather on Telegram to create a bot (returns a token), then message
-                  your bot once and visit{" "}
-                  <code className="font-mono">api.telegram.org/bot&lt;TOKEN&gt;/getUpdates</code> to
-                  find your chat ID.
-                </p>
+                </div>
               </div>
             ) : null}
           </SectionShell>
