@@ -1,6 +1,6 @@
 # Secret Claw v1 Demo — Build Plan
 
-**Status:** Working document, May 20 2026 (v0.6)
+**Status:** Working document, May 20 2026 (v0.7)
 **Companion to:** `secret-claw-v1-demo-scope.md`
 **Purpose:** Define the engineering execution path from current state to "Internal testers have used the demo." Sequences the work, identifies dependencies, captures decisions that affect the build but not the product surface.
 
@@ -17,6 +17,7 @@ What exists:
 - **Two live SecretVM deploys** for reference: `amethyst-eel` and `beige-ermine`. Both stay running as comparison baselines.
 - **SecretAI portal API research** at `C:\dev\secret-claw\docs\secretvm-provisioning-research.md`. Confirms Pattern B is achievable: provisioning is a multipart HTTP POST to `/api/vm/create`.
 - **API-key auth path validated** by user (May 19): API keys can be generated in the SecretAI portal UI and used for `vm create` operations via `Authorization: Bearer <key>`.
+- **Design conversation produced the v0.7 structural pivot** (May 20): wizard restructured from a six-screen multi-step flow to a single-form configuration page plus a dedicated agent detail page, mirroring the SecretAI portal's "Create New SecretVM" and "VM detail" page patterns. Position A visual alignment (portal's full design language, minimal chrome — header only). The existing `docs/wizard-design.md` skeleton (Chunk 2 Part 2 output, currently uncommitted) needs restructuring to reflect the section-based structure rather than per-screen sections; that restructure happens before Chunk 3 implementation begins.
 
 What doesn't exist:
 
@@ -43,20 +44,22 @@ Completed at commit e549163. Repo structure created, deploy template simplified 
 
 ### Chunk 2: Wizard design + API-key validation prototype (Week 1-2)
 
-**Goal:** Design the six-screen wizard flow in enough detail that Chunk 3's frontend build is unambiguous. Verify the SecretAI portal API works as documented with a real API key.
+**Goal:** Design the wizard's two-view product surface (single configuration form + agent detail page) in enough detail that Chunk 3's frontend build is unambiguous. Verify the SecretAI portal API works as documented with a real API key.
 
 **What gets produced:**
 
 `C:\dev\secret-claw\docs\wizard-design.md` covering:
-- Each screen's layout, copy, validation rules, error states
-- Visual style direction (deliberately plain Stripe-style for the demo — no brand commitment)
+- The `/create-agent` form sections (tier, SecretAI key, Anthropic key, Telegram, submit): layout, copy, validation rules, error states, progressive validation behavior
+- The `/agents/<deployment_id>` detail page in Provisioning, Ready, and Failed states: layout, what's visible when, in-place transition behavior
+- The Overview tab content for each state; the Logs tab fetch behavior
+- The minimal `/agents` list page (entry point)
+- The portal-style header (logo + page title + "Your Agents" link) — what it includes and what it deliberately omits versus the full portal chrome
+- Visual style direction: **Position A** — visually indistinguishable from the SecretAI Developer Portal (same colors, type, components, spacing)
 - The SecretAI API key entry flow (clear walkthrough of where to get one, validation feedback, error states for invalid/expired keys)
 - The Anthropic API key validation flow (real-time test call, latency expectations, error states)
-- The Telegram setup walkthrough (screenshots of BotFather steps, token paste UX, skip flow)
-- The provisioning screen behavior (polling cadence, status updates, what to show during the 5-minute wait)
-- The completion screen layout (URL prominent, next-steps guidance)
+- The Telegram setup walkthrough (screenshots of BotFather steps, token paste UX, skip flow via selection card)
 - Mobile responsive behavior
-- The browser-vs-backend compose rendering decision (settled during this chunk)
+- The browser-vs-backend compose rendering decision (settled at v0.5; backend-side)
 
 A small API-validation prototype:
 - Standalone HTML page or curl-equivalent that uses a real SecretAI API key
@@ -96,25 +99,43 @@ The bearer token never persists in the proxy. Each route is single-hop: receive 
 
 **Node/TypeScript compose renderer (definite component):** the existing Python `render.py` at `deploys/byo/scripts/` remains as the canonical local CLI tool for `deploys/byo/`. The wizard backend implements the same rendering logic natively in TypeScript so the Next.js process can render without shelling out to Python. Both renderers must produce equivalent output for the same input; test fixtures under `wizard/tests/renderer/` exercise this with the same template + sample inputs run through both and a byte-diff (modulo intentionally-random fields: `deployment_id`, gateway token). Renderer scope is small — Mustache-style template substitution, UUID + random-token generation, multipart-ready buffer output.
 
-**Deployment-record lifecycle (locked at v0.6):** the deployment record is created at *wizard submission time*, not at provisioning completion. The wizard frontend generates the `deployment_id` (uuid) before any portal call, POSTs to the backend's `/api/record-deployment` with status="submitted", *then* calls `POST /api/portal/vm-create`. As `GET /api/portal/job-status/[jobId]` polling progresses, the wizard PATCHes the deployment record's status through `submitted → provisioning → ready` (or `→ failed` with `error_message`). Screen 5's polling is driven against the local backend's deployment status, which the wizard keeps in sync from portal polling — cleaner separation, and failed deploys persist as observable rows rather than vanishing.
+**Deployment-record lifecycle (locked at v0.6):** the deployment record is created at *wizard submission time*, not at provisioning completion. The wizard frontend generates the `deployment_id` (uuid) before any portal call, POSTs to the backend's `/api/record-deployment` with status="submitted", *then* navigates the browser to `/agents/<deployment_id>` while the backend submits to the portal in parallel. As `GET /api/portal/job-status/[jobId]` polling progresses on the backend, it PATCHes the deployment record's status through `submitted → provisioning → ready` (or `→ failed` with `error_message`). The agent detail page polls the local backend's deployment status (not the portal directly) — cleaner separation, and failed deploys persist as observable rows.
+
+**Routes (v0.7 structure):**
+
+- `/` — redirects to `/create-agent` (or `/agents` for return visitors with prior deployments in session storage; TBD in design)
+- `/create-agent` — single-page configuration form (View 1)
+- `/agents` — minimal list of deployments owned by the current session (entry point that ties to "Your Agents" in the header)
+- `/agents/<deployment_id>` — agent detail page (View 2) with Overview + Logs tabs
+
+**UI components to build (matching the SecretAI portal's design language — Position A):**
+
+- **PortalHeader** — top-of-page branding strip: SecretAI logo + product wordmark on the left, page title centered (matches portal's pattern), "Your Agents" link on the right. Used on every page. Honest minimal chrome — no sidebar, no profile dropdown, no balance indicator. Visual matching: same heights, paddings, typography weight, and color palette (dark mode, orange-red accent).
+- **SelectionCard** — the portal's selection-card pattern: bordered card with title, description, optional radio/checkbox indicator, optional "coming soon" greyed variant. Used for tier selection (BYO / Secret) and Telegram-enable toggle.
+- **StatusPill** — small rounded pill with status color: yellow/orange for "Provisioning," green for "Running," red for "Failed." Matches the portal's status-pill component on its VM list/detail pages.
+- **FormSection** — section wrapper used to lay out `/create-agent`'s vertically-stacked sections: section title, helper text, inputs, inline validation feedback (`valid ✓` / error messages).
+- **TabStrip** — for the agent detail page: Overview (default) + Logs. Matches the portal's tab-strip styling.
+- **LogsView** — fetched-on-tab-activation scrollable text viewer (not live streaming, not server-sent events). Empty state during provisioning. Fetches from a gateway endpoint when the tab activates.
+- **ValidationIcon** — `valid ✓` / spinner / error icon used in form sections for real-time validation feedback.
 
 The frontend implements:
 
-- Six screen routes with proper navigation
-- SecretAI API key validation via `POST /api/portal/validate-key`
-- Form validation matching the design doc
-- Real-time API key validation for Anthropic (test call before accepting)
-- Real-time Telegram credential validation (getMe call to Telegram before accepting)
-- Frontend-generated `deployment_id` (uuid) and POST to `/api/record-deployment` at the moment the user clicks "deploy" on the final input screen
-- Multipart submission to the portal via `POST /api/portal/vm-create` (the proxy route renders the compose server-side from the user inputs via the Node renderer)
-- Polling `GET /api/portal/job-status/[jobId]` for provisioning status, with each status transition PATCHed to `/api/deployment-status/[deployment_id]`
-- Mobile responsive layouts
+- The four routes above with proper navigation between them
+- Progressive in-place validation in `/create-agent`: each section reaches `valid ✓` independently (no advance-to-next gating)
+- SecretAI API key validation via `POST /api/portal/validate-key` (proxy route → portal `GET /api/vm/instances`)
+- Real-time API key validation for Anthropic (test call before showing `valid ✓`)
+- Real-time Telegram credential validation (getMe call to Telegram before showing `valid ✓`)
+- Frontend-generated `deployment_id` (uuid) and POST to `/api/record-deployment` at the moment the user clicks "Create" on `/create-agent`
+- Multipart submission to the portal via `POST /api/portal/vm-create` (the proxy route renders the compose server-side from the user inputs via the Node renderer) — triggered server-side as part of the same submit handler so the browser-side navigation can happen immediately
+- Navigation to `/agents/<deployment_id>` immediately after the deployment record is created
+- Polling `GET /api/deployment-status/<deployment_id>` from the detail page while status is `submitted` or `provisioning` (~3s interval). When the response transitions to `ready` or `failed`, the page updates in place and polling stops.
+- Mobile responsive layouts that match the portal's responsive behavior
 
 The `getCurrentUser()` abstraction lives here — returns `{deploymentId: <wizard-generated-uuid>, secretAiApiKey}` after the user pastes their key. Swappable for production auth later. Used in any place the code needs to know "who is this submission for."
 
-**Estimated time:** 4-5 days of focused Claude Code work. Significantly less than the v0.3 estimate because there's no Keplr integration to build.
+**Estimated time:** 4-5 days of focused Claude Code work. Work distribution shifts versus the v0.6 estimate: less screen-routing logic (two real routes, not six), more component-system work to match the portal's visual language with fidelity. The Logs tab is a new component but small (it's a fetch + scrollable text view, no streaming).
 
-**Risks:** Medium. Web frontends have a lot of small decisions that compound. The biggest risk is the visual polish ceiling — Claude Code can produce a working wizard quickly but a *polished* one requires careful attention. Plan for an explicit polish pass after the functional build.
+**Risks:** Medium. The biggest risk is now the visual-fidelity ceiling: matching the SecretAI portal's design language precisely (colors, type, spacing, component edges) is exacting work, and "looks similar to the portal" versus "is indistinguishable from the portal" is the difference between Position A succeeding and tasting like a generic Tailwind shell. Plan for an explicit visual-fidelity pass after the functional build, with side-by-side screenshots versus the portal. The single-form structure reduces flow-state risk (no inter-screen navigation bugs) but increases form-state risk (everything lives in one page's state machine).
 
 ### Chunk 4: Backend deployment record + observability (Week 3)
 
@@ -124,17 +145,18 @@ The `getCurrentUser()` abstraction lives here — returns `{deploymentId: <wizar
 
 A Supabase project (or equivalent) backing the wizard. Table needed:
 
-- `deployments` — wizard submissions. Fields: `deployment_id` (uuid), `vm_id` (returned by portal), `vm_hostname` (returned by portal), `status` (submitted/provisioning/ready/failed), `created_at`, `provisioned_at`, `error_message`, `telegram_enabled` (boolean), `metadata` (jsonb for non-sensitive details)
+- `deployments` — wizard submissions. Fields: `deployment_id` (uuid), `vm_id` (returned by portal), `vm_hostname` (returned by portal), `gateway_token` (generated by renderer at submission time; needed so the agent detail page can redisplay it on subsequent visits), `tier` (byo/secret), `status` (submitted/provisioning/ready/failed), `created_at`, `provisioned_at`, `error_message`, `telegram_enabled` (boolean), `telegram_bot_username` (returned by portal job, optional), `metadata` (jsonb for non-sensitive details)
 
-Note what's NOT in this table: SecretAI API keys, Anthropic API keys, Telegram bot tokens, anything sensitive. Those go directly from the wizard to the portal in the compose submission and are never persisted in our backend. This is a core security property worth preserving.
+Note what's NOT in this table: SecretAI API keys, Anthropic API keys, Telegram bot tokens. Those go directly from the wizard's form into the portal API call in a single transaction and are never persisted in our backend. The `gateway_token` is the one user-facing credential we persist — it's the user's access token to *their own* VM's OpenClaw UI, not a credential to our infrastructure or the SecretAI portal. Persisting it matches the SecretAI portal's pattern of showing VM credentials repeatedly on the VM detail page.
 
 API endpoints the wizard calls:
 
 - `POST /api/validate-anthropic-key` — tests an Anthropic key with a one-token call, returns ok or invalid (lightweight backend service; doesn't store the key)
 - `POST /api/validate-telegram` — tests a Telegram bot token with a getMe call, returns ok with bot username, or invalid
-- `POST /api/record-deployment` — accepts the wizard-generated `deployment_id` and a small payload of non-sensitive metadata (telegram_enabled flag, tier, timestamp). Creates the initial row with status="submitted". **Called at wizard submission time, before the portal `vm-create` call** — so even if portal submission fails the deployment row exists for owner observability.
-- `PATCH /api/deployment-status/:deployment_id` — updates the deployment record's status as the wizard's polling progresses. Status transitions: `submitted → provisioning → ready` or `submitted → provisioning → failed`. The `failed` patch carries an `error_message`. The `ready` patch carries the `vm_id` and `vm_hostname` returned by the portal.
-- `GET /api/deployment-status/:deployment_id` — returns current state; the wizard's screen 5 polls this (not the portal directly) so screen 5's status updates are driven by the local backend; useful for owner observability as well.
+- `POST /api/record-deployment` — accepts the wizard-generated `deployment_id` and a small payload of non-sensitive metadata (telegram_enabled flag, tier, gateway_token, timestamp). Creates the initial row with status="submitted". **Called at wizard submission time, before the portal `vm-create` call** — so even if portal submission fails the deployment row exists for owner observability *and* for the agent detail page to render at `/agents/<deployment_id>` immediately on navigation.
+- `PATCH /api/deployment-status/:deployment_id` — updates the deployment record's status as the wizard's polling progresses. Status transitions: `submitted → provisioning → ready` or `submitted → provisioning → failed`. The `failed` patch carries an `error_message`. The `ready` patch carries the `vm_id`, `vm_hostname`, and `telegram_bot_username` (if Telegram was enabled) returned by the portal.
+- `GET /api/deployment-status/:deployment_id` — returns the deployment record's current state. The agent detail page polls this (not the portal directly) while status is `submitted` or `provisioning`. When status is `ready`, the response includes `vm_hostname`, `gateway_token`, `telegram_bot_username` (if applicable), `created_at`, and the rest of the row's non-sensitive fields — everything the detail page needs to render the Ready state. When status is `failed`, the response includes `error_message`. Useful for owner observability as well.
+- `GET /api/deployments` — returns the list of deployments owned by the current session (TBD: keyed by browser-session deployment_ids stored in localStorage, or some lighter mechanism). Backs the minimal `/agents` list page.
 
 SecretAI API key validation does NOT have a backend endpoint — that validation happens via the Next.js portal proxy hitting the SecretAI portal directly. The wizard backend never sees the user's SecretAI key. This keeps user credentials out of our persistent infrastructure entirely.
 
@@ -159,7 +181,7 @@ Fix every rough edge you find. Pay specific attention to:
 - The "get your SecretAI API key" walkthrough (this is the new step that didn't exist in Pattern A; testers will be confused if it's unclear)
 - Latency expectations during validation
 - Error message quality
-- The completion screen content
+- The agent detail page's Ready state content (URL, gateway token, Telegram bot username — formatted exactly like the portal's VM detail page treats equivalent fields)
 - Mobile experience
 
 Run the flow with another tester who hasn't seen it before you hand it to Alex. Watch what confuses them. Fix what's confusable.
@@ -240,3 +262,4 @@ Structure as defined in the scope doc.
 - **v0.4 (May 19 2026):** API-key auth replaces Keplr-in-wizard signing. Chunk 1 completed. Chunks 2-3 simplified.
 - **v0.5 (May 19 2026):** Chunk 2 Part 1 (API validation prototype) complete, findings folded in. `/api/vm/instances` confirmed as validation endpoint. Next.js API-route proxy now a definite Chunk 3 component (portal serves no CORS, so direct browser calls are impossible). Compose-rendering decision settled: backend-side. No user-identity display possible. See commit 360e7ca for the prototype and `wizard/prototypes/api-validation/FINDINGS.md` for empirical detail.
 - **v0.6 (May 20 2026):** Two architecture decisions locked before Chunk 3 design conversation begins. (1) Deployment records are created at wizard submission time, not at provisioning completion — the wizard frontend generates the `deployment_id` and POSTs to `/api/record-deployment` before the portal `vm-create` call, then PATCHes status as polling progresses. Failed deploys persist for owner observability. Screen 5's status polling runs against the local backend, kept in sync from portal polling. (2) Compose rendering ports from Python to Node/TypeScript for the wizard backend; `deploys/byo/scripts/render.py` remains as the canonical local CLI tool. Both must produce byte-equivalent output for the same template + inputs (test fixtures cover, modulo intentionally-random fields).
+- **v0.7 (May 20 2026):** Structural pivot from design conversation. Wizard restructured from a six-screen multi-step flow to a single-page configuration form (`/create-agent`) plus a dedicated agent detail page (`/agents/<deployment_id>`) with Overview + Logs tabs, mirroring the SecretAI portal's "Create New SecretVM" and "VM detail" page patterns. Minimal `/agents` list page added as entry point. Position A visual alignment locked: wizard adopts the SecretAI portal's full design language (colors, type, components, spacing) but explicitly does not recreate the full portal chrome — minimal portal-style header only. Chunk 3's component list reframed around portal-matching primitives (PortalHeader, SelectionCard, StatusPill, FormSection, TabStrip, LogsView, ValidationIcon). Polling moves from the (now-deleted) provisioning screen to the agent detail page; transitions in place to Ready state. `gateway_token` added to the deployment record schema so the detail page can redisplay it on subsequent visits. Wizard-design.md skeleton from Chunk 2 Part 2 will be restructured to reflect section-based form structure before Chunk 3 implementation begins.

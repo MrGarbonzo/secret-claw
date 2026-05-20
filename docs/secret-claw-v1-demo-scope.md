@@ -1,6 +1,6 @@
 # Secret Claw — v1 Demo Scope
 
-**Status:** Working document, May 20 2026 (v0.6)
+**Status:** Working document, May 20 2026 (v0.7)
 **Owner:** Garbonzo
 **Purpose:** Define the deliberately narrow scope of the first demonstrable product, for internal testers (including Alex) to use and react to. Anchors engineering work. Surfaces decisions that need Alex's input before broader v1.
 
@@ -8,7 +8,9 @@
 
 ## What this is
 
-A wizard-driven web experience that lets a user deploy their own AI agent on SecretVM in under five minutes. The user authenticates to SecretAI's existing portal (one time, in the portal itself) and generates an API key there. They paste that key into the wizard along with their Anthropic API key and optional Telegram credentials. The wizard provisions the agent on the user's behalf via the SecretAI portal API, under the user's own portal account.
+A web product that lets a user deploy their own AI agent on SecretVM in under five minutes. The user authenticates to SecretAI's existing portal (one time, in the portal itself) and generates an API key there. They paste that key into a single configuration form along with their Anthropic API key and optional Telegram credentials, click "Create," and land on the agent's detail page — initially showing provisioning state, transitioning in place to the running agent's full details (URL, gateway token, Telegram bot username) once the SecretAI portal reports ready.
+
+The wizard is visually indistinguishable from the SecretAI Developer Portal (https://secretai.scrtlabs.com) — same color palette, type system, spacing, and component patterns (selection cards, status pills, form sections, dark-mode layout with orange-red accent). This is a deliberate **Position A** design choice: the wizard reads as a contiguous extension of the portal so that internal testers (and any future portal acquisition of the wizard surface) experience zero visual context-switch. Honest scope on the chrome: the wizard ships a minimal portal-style header (Secret AI Developer Portal logo, page title, "Your Agents" link) but does not recreate the portal's full sidebar, profile dropdown, or balance indicator — those reflect concepts the wizard has no equivalent for.
 
 The deployed agent runs Anthropic Claude Sonnet 4.6 inside an attested confidential compute environment, with an optional Telegram channel for proactive interaction. Agent name is fixed to "Secret Agent" for v1; personality and identity customization come later.
 
@@ -35,14 +37,28 @@ The landing page shows both tiers from the start so the product positioning is c
 
 **Secret (greyed out, "coming soon"):** SecretAI hosts the model on attested infrastructure. End-to-end dual attestation. No third-party API dependency. Waiting on qwen3.6 availability on SecretAI.
 
-### Wizard flow (six screens)
+### Wizard flow (two views)
 
-1. **Land + tier selection.** Two tier cards, BYO selectable, Secret greyed. One CTA to continue.
-2. **SecretAI portal API key.** Text input. Walkthrough: "Go to [SecretAI portal link] → sign in with Keplr → generate an API key → paste it here." Real-time validation against `GET /api/vm/instances` with `Authorization: Bearer <key>` — the empirically-confirmed validation endpoint (200 with the user's VM list for a valid key, 401 for invalid or missing). On success the wizard shows "API key valid ✓" and optionally surfaces the existing-VM count as soft confirmation ("Looks like you've deployed N VMs here before") if N > 0. **No "Connected as `<wallet>`" display:** the portal does not expose user identity to bearer-token callers (no `ownerSub`, no email, no wallet address), so the wizard has no identifier to show. If the key is invalid, surface the error clearly with a "regenerate your key" prompt.
-3. **Anthropic API key.** Text input with paste-friendly UX. Real-time validation against Anthropic's API (one-token test call) before allowing progression. Displayed text confirms "Powered by Claude Sonnet 4.6 from Anthropic."
-4. **Telegram setup (encouraged, skippable).** Walkthrough of BotFather with screenshots. User pastes bot token and chat ID. Validation against Telegram's API. Prominent "Skip — I'll add this later" option with explanation: "Without Telegram, your agent will only be reachable through its web URL."
-5. **Provisioning screen.** "Setting up your Secret Agent... about 5 minutes." Status updates throughout: "Submitting your configuration," "Creating your secure compute environment," "Installing your agent," "Connecting to Telegram" (if applicable). Backed by real polling of the SecretAI portal's background job endpoint.
-6. **Completion screen.** Agent URL prominent. Bot username prominent (if Telegram was set up). Brief "what to do next": "Open your agent's URL to chat directly," and if Telegram is set up, "Your agent will message you on Telegram in about a minute. Tomorrow at 7am UTC you'll receive your first daily news briefing." Note that the user can manage their VM directly through the SecretAI portal — your agent isn't locked inside our wizard.
+The product surface is two pages, not a multi-step flow. Structurally and visually they mirror the SecretAI portal's "Create New SecretVM" page (for View 1) and "VM detail" page (for View 2). A minimal list page serves as the entry point that ties them together.
+
+**Entry point — `/agents` (minimal "Your Agents" list).** A list of deployments the user has created in *this* wizard session (the wizard has no persistent user concept; the list is keyed by browser session or local storage of `deployment_id`s the user owns). Empty state with a prominent "+ Create New Agent" call to action. Each row links to the matching agent detail page. Intentionally minimal — the portal handles the real fleet view; this list exists primarily to give "Your Agents" in the header somewhere honest to point.
+
+**View 1 — `/create-agent` (single configuration form, one scrollable page).** Sections laid out vertically, validation progressive (each section reaches a `valid ✓` state as the user completes it, with errors surfaced inline). No "advance to next screen" gating between sections — the user can scroll back and forth and edit anything. A single "Create" button at the bottom submits the whole form.
+
+   Sections in order:
+   1. **Tier selection.** Two selection cards matching the portal's selection-card pattern: BYO API (enabled, selected by default) and Secret (greyed "coming soon" — waiting on qwen3.6 on SecretAI).
+   2. **SecretAI Portal API Key.** Text input. Walkthrough: "Go to [SecretAI portal link] → sign in with Keplr → generate an API key → paste it here." Real-time validation against `GET /api/vm/instances` with `Authorization: Bearer <key>` — the empirically-confirmed validation endpoint (200 with the user's VM list for a valid key, 401 for invalid or missing). On success the section shows "API key valid ✓" and optionally surfaces the existing-VM count as soft confirmation ("Looks like you've deployed N VMs here before") if N > 0. **No "Connected as `<wallet>`" display:** the portal does not expose user identity to bearer-token callers (no `ownerSub`, no email, no wallet address). If the key is invalid, surface the error clearly with a "regenerate your key" prompt.
+   3. **Anthropic API Key.** Text input with paste-friendly UX. Real-time validation against Anthropic's API (one-token test call) before showing `valid ✓`. Helper text confirms "Powered by Claude Sonnet 4.6 from Anthropic."
+   4. **Telegram (optional).** Selection card pattern: "Enable Telegram" / "Skip — I'll add this later" with the explicit explanation "Without Telegram, your agent will only be reachable through its web URL." When enabled, expands to show the BotFather walkthrough, bot-token input, and chat-ID input. Validation against Telegram's API (getMe) before showing `valid ✓`.
+   5. **Submit.** "Create" button. Disabled until all required sections (tier, SecretAI key, Anthropic key) reach `valid ✓`. Telegram is optional. On click, the wizard generates the `deployment_id`, records the deployment, submits to the portal, and navigates the browser to `/agents/<deployment_id>` (the detail page).
+
+**View 2 — `/agents/<deployment_id>` (agent detail page).** Mirrors the SecretAI portal's VM detail page structurally. Page title shows the agent name. Below the title is a tab strip with two tabs (functional subset of the portal's tab structure — the portal's Upgrade History, Resources, Compose File, Network, Attestation, and Code tabs are VM-specific concepts that don't translate to the agent abstraction and are deliberately not recreated):
+
+   - **Overview tab (default).**
+     - **While Provisioning:** status pill ("Provisioning" — yellow/orange), what's already known (agent name, tier, telegram-enabled flag, creation time, deployment ID), and a progress indicator with sub-status text reflecting the portal's background-job phases ("Submitting your configuration," "Creating your secure compute environment," "Installing your agent," "Connecting to Telegram" if applicable). The page polls the wizard backend's `/api/deployment-status/<id>` endpoint, which the wizard keeps in sync from portal polling.
+     - **When Ready:** status pill flips to "Running" (green). The page updates in place — same URL, same layout — to reveal the agent's URL prominently, the gateway token, the Telegram bot username (if Telegram was set up), and a brief "what to do next" section: "Open your agent's URL to chat directly," and if Telegram is set up, "Your agent will message you on Telegram in about a minute. Tomorrow at 7am UTC you'll receive your first daily news briefing." A note clarifies that the user can manage their VM directly through the SecretAI portal — the agent isn't locked inside our wizard.
+     - **If Failed:** status pill flips to "Failed" (red). The page shows the error message and a "Try again" link back to `/create-agent`.
+   - **Logs tab.** Fetched on tab activation (not live-streamed). Recent gateway logs from the agent's OpenClaw container — a simple scrollable text view. Empty state during provisioning ("Logs will appear after the agent boots"). Useful for debugging when something looks wrong.
 
 ### What the deployed agent does
 
@@ -54,7 +70,7 @@ The agent comes with two routines pre-configured:
 
 **Welcome message (one-shot, on first boot).** If Telegram is connected, the agent sends a welcome message introducing itself and mentioning the upcoming morning briefing. Fires exactly once via deterministic past-timestamp cron + deleteAfterRun pattern.
 
-**Web UI.** The OpenClaw control UI is reachable at the SecretVM-provided URL. User authenticates with the gateway token (visible on the completion screen). They can chat with the agent through the web interface even without Telegram.
+**Web UI.** The OpenClaw control UI is reachable at the SecretVM-provided URL. User authenticates with the gateway token (visible on the agent detail page once status flips to Running). They can chat with the agent through the web interface even without Telegram.
 
 ### Agent identity
 
@@ -74,20 +90,20 @@ The wizard provisions on behalf of the user using a SecretAI portal API key the 
 
 Concrete flow:
 
-1. User pastes their SecretAI portal API key into the wizard.
-2. Wizard validates the key against the portal (a lightweight authenticated call).
-3. User completes the rest of the wizard, providing their Anthropic API key and (optionally) Telegram credentials.
-4. On clicking "deploy" on the final input screen, the wizard frontend generates a `deployment_id` (uuid) and creates a deployment record in our backend with status="submitted" via `POST /api/record-deployment`. The record holds non-sensitive metadata only (deployment_id, tier, telegram_enabled flag, timestamp).
-5. Wizard renders the deploy template with user-specific values (server-side, via the wizard's Next.js portal proxy).
-6. Wizard submits `POST /api/vm/create` to the SecretAI portal with `Authorization: Bearer <api_key>` and the rendered compose attached as multipart form data.
-7. Wizard polls `/api/background-job/<jobId>` (also with bearer auth) until status transitions. As status transitions, the wizard PATCHes the deployment record (`submitted → provisioning → ready` on success; `→ failed` with `error_message` on failure). The `ready` patch carries `vm_id` and `vm_hostname`.
-8. Screen 5 polls the local backend's deployment record (not the portal directly), so its progress display is driven from a single source of truth that the owner dashboard also reads.
-9. On completion, the wizard reads the VM details from the deployment record and shows them on the completion screen.
+1. User lands at `/create-agent` (or arrives via `/agents` → "+ Create New Agent").
+2. User pastes their SecretAI portal API key into the form's SecretAI section. The section validates the key against the portal (a lightweight authenticated call) and shows `valid ✓` on success.
+3. User completes the remaining sections: Anthropic API key (validated in place) and Telegram (enabled or skipped via selection card; if enabled, bot token and chat ID validated in place).
+4. User clicks "Create" at the bottom of the form. The wizard frontend generates a `deployment_id` (uuid) and creates a deployment record in our backend with status="submitted" via `POST /api/record-deployment`. The record holds non-sensitive metadata only (deployment_id, tier, telegram_enabled flag, gateway_token, timestamp).
+5. The wizard frontend immediately navigates the browser to `/agents/<deployment_id>` — the agent detail page. The Overview tab renders in "Provisioning" state showing what's already known (name, tier, telegram flag, creation time, deployment ID) and a polling progress indicator.
+6. In parallel, the wizard's backend renders the deploy template with user-specific values (server-side via the Next.js portal proxy) and submits `POST /api/vm/create` to the SecretAI portal with `Authorization: Bearer <api_key>` and the rendered compose attached as multipart form data.
+7. The backend polls `/api/background-job/<jobId>` (with bearer auth) until status transitions. As status transitions, the backend updates the deployment record (`submitted → provisioning → ready` on success; `→ failed` with `error_message` on failure). The `ready` update carries `vm_id` and `vm_hostname`.
+8. The agent detail page polls `/api/deployment-status/<deployment_id>` on a short interval (e.g. every 3 seconds) while status is `submitted` or `provisioning`. When the response transitions to `ready` (or `failed`), the page updates in place — same URL, same layout — to show the full agent details (URL, gateway token, Telegram bot username if applicable) or the failure error message.
 
 Key properties:
 
 - **Deployment records persist regardless of outcome.** A row is created at submission time, before the portal is even called. If portal submission fails or provisioning errors out mid-flight, the row remains with status="failed" and `error_message` set — visible in the owner dashboard. The successful path adds `vm_id` and `vm_hostname`. The owner dashboard therefore shows every attempted deployment, not just successful ones.
-- **The wizard's backend never holds user credentials persistently.** API keys, Anthropic keys, and Telegram credentials all flow from the wizard's form into the portal API call in a single transaction. The deployment record holds only non-sensitive metadata (deployment_id, tier, telegram_enabled flag, timestamps, vm_id, vm_hostname, error_message). No bearer tokens, no Anthropic keys, no Telegram bot tokens.
+- **The wizard's backend never holds the user's SecretAI, Anthropic, or Telegram credentials.** API keys, Anthropic keys, and Telegram credentials all flow from the wizard's form into the portal API call in a single transaction and are then discarded. The deployment record holds: `deployment_id`, `tier`, `telegram_enabled` flag, `gateway_token`, timestamps, `vm_id`, `vm_hostname`, `error_message`. No bearer tokens, no Anthropic keys, no Telegram bot tokens.
+- **The `gateway_token` is the one user-facing credential the wizard persists.** It's generated by the renderer per-deployment and baked into the OpenClaw config inside the user's TEE-encrypted VM; the user needs it to access the OpenClaw control UI. Persisting it in the deployment record lets the agent detail page redisplay it on subsequent visits (matching the portal's pattern of showing VM credentials repeatedly). It's not a credential to *our* infrastructure or to the SecretAI portal — it's the user's access token to their own VM's UI, conceptually similar to `vm_hostname`.
 - The wizard is auth-method-agnostic. It accepts an API key from whoever generated it; the portal's auth method (currently Keplr) is invisible to the wizard. When the portal supports additional auth methods, the wizard works unchanged.
 - **The wizard frontend cannot call the SecretAI portal directly from the browser.** Empirical Chunk 2 finding: the portal returns no CORS response headers on any path, so every cross-origin preflight is blocked by the browser. The wizard ships with a thin Next.js API-route proxy (under `wizard/app/api/portal/*`) that forwards portal calls server-side, attaching the user-supplied bearer token to each upstream request. The token never persists in the proxy — single-hop forwarding only — which preserves the "no user credentials persisted in our infrastructure" property.
 - **Compose rendering happens in Node/TypeScript inside the wizard backend.** The existing Python renderer at `deploys/byo/scripts/render.py` remains as the canonical local CLI tool for direct `deploys/byo/` work; the wizard's Node renderer is the production path. Both must produce byte-equivalent output for the same inputs (modulo intentionally-random fields like deployment_id and gateway token).
@@ -132,6 +148,8 @@ These are deliberate gaps. Each becomes part of the conversation with Alex after
 - **No multi-VM management.** One deployment per wizard run; users wanting multiple agents run the wizard multiple times (their portal will show all of them).
 - **No Traefik toggle.** The deploy template ships with the Traefik configuration we've validated. No client-side compose YAML mutation.
 - **No contract-based KMS for secrets in v0.** Default to non-contract KMS provider (portal handles key wrapping server-side).
+- **No recreation of the full SecretAI portal chrome.** The wizard uses a minimal portal-style header only (logo + "Your Agents" link + page title). No sidebar, no profile dropdown, no balance indicator, no portal-wide navigation. The wizard is portal-*aligned* visually, not a portal *clone*.
+- **No portal tabs beyond Overview + Logs on the agent detail page.** The portal's VM detail page has Upgrade History, Resources, Compose File, Network, Attestation, and Code tabs. These reflect VM-as-VM operations; the wizard treats the deployment as "an agent," so the additional tabs are deliberately not implemented. Users wanting those views go to the SecretAI portal directly.
 
 ## Open decisions Alex needs to make
 
@@ -209,3 +227,4 @@ secret-claw/
 - **v0.4 (May 19 2026):** Architecture simplified from Keplr-in-wizard signing to SecretAI portal API-key bearer auth. CLI docs confirmed API keys are a first-class auth mechanism for all VM operations. User generates the key in the portal once, pastes it into the wizard. Removes the Keplr handshake complexity entirely. Wizard is now auth-method-agnostic and forward-compatible with future portal auth methods.
 - **v0.5 (May 19 2026):** API validation prototype findings folded in. `/api/vm/instances` confirmed as validation endpoint. No user-identity display possible (bearer callers get null identity fields). CORS finding: portal does not implement preflight; wizard requires Next.js proxy routes for portal calls. See `wizard/prototypes/api-validation/FINDINGS.md` and commit 360e7ca.
 - **v0.6 (May 20 2026):** Architecture decisions locked before Chunk 3 design conversation. Deployment record lifecycle clarified: rows are created at wizard submission time (before the portal `vm-create` call) and status-tracked through `submitted → provisioning → ready`/`failed` as polling progresses. Failed deploys persist as observable rows in the owner dashboard. Compose rendering ports from Python to Node/TypeScript in the wizard backend; `deploys/byo/scripts/render.py` remains as the canonical local CLI tool. Both renderers held to byte-equivalent output.
+- **v0.7 (May 20 2026):** Structural pivot following design conversation. Wizard restructured from a six-screen multi-step flow to a single-page configuration form plus a dedicated agent detail page, mirroring the SecretAI portal's "Create New SecretVM" and "VM detail" page patterns. Position A visual alignment: wizard adopts the portal's full design language (colors, type, components, spacing) but explicitly does not recreate the full portal chrome — minimal portal-style header only (logo + page title + "Your Agents" link). Two-view product surface: `/create-agent` (single form with sections: tier / SecretAI key / Anthropic key / Telegram / Submit) and `/agents/<deployment_id>` (Overview + Logs tabs, functional subset of the portal's tab structure). Post-submission flow: submit redirects to the agent detail page in "Provisioning" state, polls the local backend, and updates in place to "Running" state. Minimal `/agents` list page serves as entry point. `gateway_token` added to the deployment record so the detail page can redisplay it on subsequent visits.
