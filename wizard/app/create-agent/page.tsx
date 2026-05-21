@@ -316,7 +316,6 @@ export default function CreateAgentPage() {
                 description="Model hosted on SecretAI for end-to-end dual attestation. Powered by qwen3.5-uncensored-aggressive:27b on SecretAI rytn."
                 selected={tier === "secret"}
                 onClick={() => setTier("secret")}
-                badge="Preview"
               />
             </div>
           </SectionShell>
