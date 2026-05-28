@@ -1,0 +1,10 @@
+# Hermes Agent .env — BYO tier.
+# Written to $HERMES_HOME/.env on first boot by the docker-compose seed
+# script. chmod 600 inside the container.
+
+ANTHROPIC_API_KEY=__ANTHROPIC_API_KEY__
+
+# Telegram bot — long-polling mode (no webhook).
+TELEGRAM_BOT_TOKEN=__TELEGRAM_BOT_TOKEN__
+TELEGRAM_ALLOWED_USERS=__TELEGRAM_CHAT_ID__
+TELEGRAM_HOME_CHANNEL=__TELEGRAM_CHAT_ID__

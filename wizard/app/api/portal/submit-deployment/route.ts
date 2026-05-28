@@ -13,6 +13,7 @@ import {
   DEMO_VM_ID,
 } from "@/lib/demo";
 import type { DeploymentRecord, FormSubmission } from "@/lib/types";
+import { SECRETAI_MODELS, DEFAULT_SECRETAI_MODEL } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
@@ -39,6 +40,9 @@ export async function POST(request: Request) {
   }
 
   const tier = body.tier === "secret" ? "secret" : "byo";
+  // Default runtime to OpenClaw for backward compat with form
+  // submissions that predate the Hermes-runtime addition.
+  const runtime = body.runtime === "hermes" ? "hermes" : "openclaw";
 
   if (!body.secretaiApiKey) {
     return NextResponse.json(
@@ -53,6 +57,20 @@ export async function POST(request: Request) {
     );
   }
 
+  // Resolve and validate the Secret-tier model. Whitelist enforcement
+  // happens in render() too, but failing fast here gives the client a
+  // clean 400 instead of a 500 from a deferred validation error.
+  let secretaiModel: string | undefined;
+  if (tier === "secret") {
+    secretaiModel = (body.secretaiModel || DEFAULT_SECRETAI_MODEL).trim();
+    if (!SECRETAI_MODELS.some((m) => m.id === secretaiModel)) {
+      return NextResponse.json(
+        { error: `secretaiModel must be one of ${SECRETAI_MODELS.map((m) => m.id).join(", ")}` },
+        { status: 400 },
+      );
+    }
+  }
+
   const deploymentId = crypto.randomUUID();
   const gatewayToken = crypto.randomBytes(32).toString("hex");
   const telegramEnabled = !!body.telegramEnabled;
@@ -60,7 +78,9 @@ export async function POST(request: Request) {
   const record: DeploymentRecord = {
     deployment_id: deploymentId,
     status: "submitted",
+    runtime,
     tier,
+    secretai_model: secretaiModel,
     gateway_token: gatewayToken,
     telegram_enabled: telegramEnabled,
     telegram_bot_username: body.telegramBotUsername,
@@ -116,10 +136,13 @@ async function handlePortalProvisioning(opts: {
     await db.update(deploymentId, { status: "provisioning" });
 
     const tier = form.tier === "secret" ? "secret" : "byo";
+    const runtime = form.runtime === "hermes" ? "hermes" : "openclaw";
     const rendered = render({
+      runtime,
       tier,
       anthropicApiKey: tier === "byo" ? form.anthropicApiKey : undefined,
       secretaiApiKey: tier === "secret" ? form.secretaiApiKey : undefined,
+      secretaiModel: tier === "secret" ? form.secretaiModel : undefined,
       telegramBotToken: form.telegramEnabled ? form.telegramBotToken : undefined,
       telegramChatId: form.telegramEnabled ? form.telegramChatId : undefined,
       deploymentId,
@@ -128,7 +151,7 @@ async function handlePortalProvisioning(opts: {
 
     const created = await createVm({
       apiKey: form.secretaiApiKey,
-      name: `secret-agent-${deploymentId.split("-")[0]}`,
+      name: `secret-agent-${runtime}-${deploymentId.split("-")[0]}`,
       vmTypeId: process.env.SECRETVM_TYPE_ID || "default",
       environment: "prod",
       compose: rendered.compose,

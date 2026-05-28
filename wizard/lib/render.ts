@@ -23,7 +23,8 @@ import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 
-import type { RenderConfig, RenderResult, Tier } from "./types";
+import type { RenderConfig, RenderResult, Runtime, Tier } from "./types";
+import { DEFAULT_SECRETAI_MODEL, SECRETAI_MODELS } from "./types";
 
 function resolveTemplatesRoot(): string {
   if (process.env.SECRET_CLAW_TEMPLATES_DIR) {
@@ -41,13 +42,19 @@ function resolveTemplatesRoot(): string {
 
 const TEMPLATES_ROOT = resolveTemplatesRoot();
 
-function tierTemplatesDir(tier: Tier): string {
-  // Two layouts supported:
-  //  - wizard/templates/<tier>/                   (after prebuild copy)
-  //  - <repo>/deploys/<tier>/templates/           (canonical source)
-  const flat = path.join(TEMPLATES_ROOT, tier);
-  if (fs.existsSync(path.join(flat, "openclaw.json"))) return flat;
-  return path.join(TEMPLATES_ROOT, tier, "templates");
+function runtimeTierTemplatesDir(runtime: Runtime, tier: Tier): string {
+  // Two layouts supported, in priority order:
+  //  - wizard/templates/<runtime>/<tier>/                 (after prebuild)
+  //  - <repo>/deploys/<runtime>/<tier>/templates/         (canonical source)
+  const flat = path.join(TEMPLATES_ROOT, runtime, tier);
+  // Sentinel file differs per runtime: openclaw.json for OpenClaw,
+  // config.yaml for Hermes. If either is present at the flat path,
+  // the prebuild copy is in place.
+  const sentinels = runtime === "openclaw" ? ["openclaw.json"] : ["config.yaml"];
+  for (const s of sentinels) {
+    if (fs.existsSync(path.join(flat, s))) return flat;
+  }
+  return path.join(TEMPLATES_ROOT, runtime, tier, "templates");
 }
 
 const HOSTNAME_RE = /^[a-zA-Z0-9]([a-zA-Z0-9\-]{0,253}\.)+[a-zA-Z]{2,}$/;
@@ -71,8 +78,8 @@ const B64_WRAP_COLS = 76;
 const RUNTIME_HOSTNAME_SENTINEL = "__RUNTIME-VM-HOSTNAME__";
 const DEFAULT_VM_HOSTNAME = RUNTIME_HOSTNAME_SENTINEL;
 
-function readTemplate(tier: Tier, ...parts: string[]): string {
-  return fs.readFileSync(path.join(tierTemplatesDir(tier), ...parts), "utf-8");
+function readTemplate(runtime: Runtime, tier: Tier, ...parts: string[]): string {
+  return fs.readFileSync(path.join(runtimeTierTemplatesDir(runtime, tier), ...parts), "utf-8");
 }
 
 function renderStr(template: string, replacements: Record<string, string>): string {
@@ -123,12 +130,13 @@ function renderOpenclawJson(opts: {
   vmHostname: string;
   anthropicApiKey?: string;
   secretaiApiKey?: string;
+  secretaiModel: string;
   telegramBotToken: string;
   telegramChatId: string;
   gatewayToken: string;
   telegramEnabled: boolean;
 }): string {
-  const tmpl = readTemplate(opts.tier, "openclaw.json");
+  const tmpl = readTemplate("openclaw", opts.tier, "openclaw.json");
   const replacements: Record<string, string> = {
     VM_HOSTNAME: opts.vmHostname,
     TELEGRAM_BOT_TOKEN: opts.telegramBotToken || "DISABLED",
@@ -139,6 +147,7 @@ function renderOpenclawJson(opts: {
     replacements.ANTHROPIC_API_KEY = opts.anthropicApiKey || "";
   } else {
     replacements.SECRETAI_API_KEY = opts.secretaiApiKey || "";
+    replacements.MODEL = opts.secretaiModel;
   }
   const intermediate = renderStr(tmpl, replacements);
 
@@ -167,7 +176,7 @@ function renderCronJobs(opts: {
   welcomeAtIso: string;
   telegramEnabled: boolean;
 }): string {
-  const tmpl = readTemplate(opts.tier, "cron-jobs.json");
+  const tmpl = readTemplate("openclaw", opts.tier, "cron-jobs.json");
   const intermediate = renderStr(tmpl, {
     TELEGRAM_CHAT_ID: opts.telegramChatId || "0",
     WELCOME_AT_ISO: opts.welcomeAtIso,
@@ -202,7 +211,7 @@ function renderWorkspace(opts: {
 
   const out: Record<string, string> = {};
   for (const name of ["AGENTS.md", "IDENTITY.md", "SOUL.md", "USER.md"]) {
-    const tmpl = readTemplate(opts.tier, "workspace", name);
+    const tmpl = readTemplate("openclaw", opts.tier, "workspace", name);
     out[name] = renderStr(tmpl, subs);
   }
   return out;
@@ -215,7 +224,7 @@ function renderCompose(opts: {
   cronJobs: string;
   workspace: Record<string, string>;
 }): string {
-  const tmpl = readTemplate(opts.tier, "docker-compose.yml");
+  const tmpl = readTemplate("openclaw", opts.tier, "docker-compose.yml");
   return renderStr(tmpl, {
     DEPLOYMENT_ID: opts.deploymentId,
     DEPLOYMENT_ID_SHORT: opts.deploymentId.split("-")[0]!,
@@ -228,8 +237,120 @@ function renderCompose(opts: {
   });
 }
 
+// ---------- Hermes runtime ----------
+
+function renderHermesConfigYaml(opts: {
+  tier: Tier;
+  vmHostname: string;
+  secretaiModel: string;
+}): string {
+  const tmpl = readTemplate("hermes", opts.tier, "config.yaml");
+  const replacements: Record<string, string> = {
+    VM_HOSTNAME: opts.vmHostname,
+  };
+  if (opts.tier === "secret") {
+    replacements.MODEL = opts.secretaiModel;
+  }
+  return renderStr(tmpl, replacements);
+}
+
+function renderHermesEnv(opts: {
+  tier: Tier;
+  anthropicApiKey?: string;
+  secretaiApiKey?: string;
+  telegramBotToken: string;
+  telegramChatId: string;
+}): string {
+  const tmpl = readTemplate("hermes", opts.tier, "env");
+  const replacements: Record<string, string> = {
+    TELEGRAM_BOT_TOKEN: opts.telegramBotToken || "DISABLED",
+    TELEGRAM_CHAT_ID: opts.telegramChatId || "0",
+  };
+  if (opts.tier === "byo") {
+    replacements.ANTHROPIC_API_KEY = opts.anthropicApiKey || "";
+  } else {
+    replacements.SECRETAI_API_KEY = opts.secretaiApiKey || "";
+  }
+  return renderStr(tmpl, replacements);
+}
+
+function renderHermesCronJobs(opts: {
+  tier: Tier;
+  telegramChatId: string;
+  welcomeAtIso: string;
+  telegramEnabled: boolean;
+}): string {
+  const tmpl = readTemplate("hermes", opts.tier, "cron-jobs.json");
+  const intermediate = renderStr(tmpl, {
+    TELEGRAM_CHAT_ID: opts.telegramChatId || "0",
+    WELCOME_AT_ISO: opts.welcomeAtIso,
+  });
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const data: any = JSON.parse(intermediate);
+  if (!opts.telegramEnabled) {
+    for (const job of data.jobs ?? []) {
+      job.enabled = false;
+    }
+  }
+  return stringifyJson(data);
+}
+
+function renderHermesWorkspace(opts: {
+  tier: Tier;
+  telegramChatId: string;
+}): Record<string, string> {
+  const subs = {
+    TELEGRAM_CHAT_ID: opts.telegramChatId || "(not configured)",
+  };
+  const out: Record<string, string> = {};
+  for (const name of ["AGENTS.md", "SOUL.md", "USER.md"]) {
+    const tmpl = readTemplate("hermes", opts.tier, "workspace", name);
+    out[name] = renderStr(tmpl, subs);
+  }
+  return out;
+}
+
+function renderHermesCompose(opts: {
+  tier: Tier;
+  deploymentId: string;
+  anthropicApiKey?: string;
+  secretaiApiKey?: string;
+  telegramBotToken: string;
+  telegramChatId: string;
+  configYaml: string;
+  envFile: string;
+  cronJobs: string;
+  workspace: Record<string, string>;
+}): string {
+  const tmpl = readTemplate("hermes", opts.tier, "docker-compose.yml");
+  const replacements: Record<string, string> = {
+    DEPLOYMENT_ID: opts.deploymentId,
+    DEPLOYMENT_ID_SHORT: opts.deploymentId.split("-")[0]!,
+    TELEGRAM_BOT_TOKEN: opts.telegramBotToken || "DISABLED",
+    TELEGRAM_CHAT_ID: opts.telegramChatId || "0",
+    CONFIG_YAML_B64: b64ForYamlBlock(opts.configYaml),
+    ENV_B64: b64ForYamlBlock(opts.envFile),
+    CRON_JOBS_B64: b64ForYamlBlock(opts.cronJobs),
+    AGENTS_MD_B64: b64ForYamlBlock(opts.workspace["AGENTS.md"]!),
+    SOUL_MD_B64: b64ForYamlBlock(opts.workspace["SOUL.md"]!),
+    USER_MD_B64: b64ForYamlBlock(opts.workspace["USER.md"]!),
+  };
+  if (opts.tier === "byo") {
+    replacements.ANTHROPIC_API_KEY = opts.anthropicApiKey || "";
+  } else {
+    replacements.SECRETAI_API_KEY = opts.secretaiApiKey || "";
+  }
+  return renderStr(tmpl, replacements);
+}
+
 export function render(config: RenderConfig): RenderResult {
+  const runtime: Runtime = config.runtime || "openclaw";
   const tier: Tier = config.tier || "byo";
+
+  if (runtime !== "openclaw" && runtime !== "hermes") {
+    throw new Error(`render.ts: unknown runtime ${JSON.stringify(runtime)}`);
+  }
 
   if (tier === "byo") {
     if (!config.anthropicApiKey) {
@@ -272,11 +393,70 @@ export function render(config: RenderConfig): RenderResult {
   const gatewayToken = (config.gatewayToken || crypto.randomBytes(32).toString("hex")).trim();
   const welcomeAtIso = config.welcomeAtIso || deriveWelcomeAtIso();
 
+  // Resolve and validate the Secret-tier model. Whitelist only — guards
+  // against arbitrary user input ending up as the provider's `default`
+  // model id (or as a substring in tool messages). Ignored for BYO tier.
+  const secretaiModel = (config.secretaiModel || DEFAULT_SECRETAI_MODEL).trim();
+  if (tier === "secret" && !SECRETAI_MODELS.some((m) => m.id === secretaiModel)) {
+    throw new Error(
+      `render.ts: secretaiModel ${JSON.stringify(secretaiModel)} not in allowed list (${SECRETAI_MODELS.map((m) => m.id).join(", ")})`,
+    );
+  }
+
+  if (runtime === "hermes") {
+    const configYaml = renderHermesConfigYaml({ tier, vmHostname, secretaiModel });
+    const envFile = renderHermesEnv({
+      tier,
+      anthropicApiKey: config.anthropicApiKey,
+      secretaiApiKey: config.secretaiApiKey,
+      telegramBotToken: tgToken,
+      telegramChatId: tgChat,
+    });
+    const cronJobsJsonH = renderHermesCronJobs({
+      tier,
+      telegramChatId: tgChat,
+      welcomeAtIso,
+      telegramEnabled,
+    });
+    const workspaceH = renderHermesWorkspace({
+      tier,
+      telegramChatId: tgChat,
+    });
+    const composeH = renderHermesCompose({
+      tier,
+      deploymentId,
+      anthropicApiKey: config.anthropicApiKey,
+      secretaiApiKey: config.secretaiApiKey,
+      telegramBotToken: tgToken,
+      telegramChatId: tgChat,
+      configYaml,
+      envFile,
+      cronJobs: cronJobsJsonH,
+      workspace: workspaceH,
+    });
+    return {
+      compose: composeH,
+      // For Hermes, providerConfig is the rendered config.yaml.
+      providerConfig: configYaml,
+      cronJobsJson: cronJobsJsonH,
+      // Include the rendered .env in the workspace map (under a non-md
+      // key) so callers that dump artifacts get the full picture.
+      workspace: { ...workspaceH, ".env": envFile },
+      deploymentId,
+      gatewayToken,
+      telegramEnabled,
+      runtime,
+      tier,
+      secretaiModel: tier === "secret" ? secretaiModel : "",
+    };
+  }
+
   const openclawJson = renderOpenclawJson({
     tier,
     vmHostname,
     anthropicApiKey: config.anthropicApiKey,
     secretaiApiKey: config.secretaiApiKey,
+    secretaiModel,
     telegramBotToken: tgToken,
     telegramChatId: tgChat,
     gatewayToken,
@@ -306,12 +486,14 @@ export function render(config: RenderConfig): RenderResult {
 
   return {
     compose,
-    openclawJson,
+    providerConfig: openclawJson,
     cronJobsJson,
     workspace,
     deploymentId,
     gatewayToken,
     telegramEnabled,
+    runtime,
     tier,
+    secretaiModel: tier === "secret" ? secretaiModel : "",
   };
 }

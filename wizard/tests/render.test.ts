@@ -25,9 +25,13 @@ import path from "node:path";
 import { render } from "../lib/render";
 
 // `npm test` runs from the wizard/ directory, so cwd is wizard/. Resolve
-// up to secret-claw/ then into deploys/byo/.
+// up to secret-claw/ then into deploys/openclaw/byo/ (after the
+// 2026-05-27 restructure that added Hermes as a 2nd runtime tree).
+// scripts/render.py lives inside deploys/openclaw/byo/ because its
+// relative __file__ path expects templates/ as a sibling — keeping it
+// adjacent to the BYO templates it renders.
 const REPO_ROOT = path.resolve(process.cwd(), "..");
-const DEPLOYS_BYO = path.join(REPO_ROOT, "deploys", "byo");
+const DEPLOYS_BYO = path.join(REPO_ROOT, "deploys", "openclaw", "byo");
 const RENDER_PY = path.join(DEPLOYS_BYO, "scripts", "render.py");
 
 const FIXED_DEPLOYMENT_ID = "11111111-2222-3333-4444-555555555555";
@@ -179,7 +183,7 @@ for (const fixture of FIXTURES) {
 
     const filesToCompare: Array<{ label: string; pyName: string; tsValue: string }> = [
       { label: "docker-compose.yml", pyName: "docker-compose.yml", tsValue: tsResult.compose },
-      { label: "openclaw.rendered.json", pyName: "openclaw.rendered.json", tsValue: tsResult.openclawJson },
+      { label: "openclaw.rendered.json", pyName: "openclaw.rendered.json", tsValue: tsResult.providerConfig },
       { label: "cron-jobs.rendered.json", pyName: "cron-jobs.rendered.json", tsValue: tsResult.cronJobsJson },
       { label: "AGENTS.md", pyName: "AGENTS.md", tsValue: tsResult.workspace["AGENTS.md"]! },
       { label: "IDENTITY.md", pyName: "IDENTITY.md", tsValue: tsResult.workspace["IDENTITY.md"]! },

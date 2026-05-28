@@ -67,12 +67,17 @@ async function main(): Promise<void> {
 
   // Compose to stdout for piping into a file. Metadata to stderr so it
   // doesn't pollute the YAML.
+  console.error(`# runtime: ${result.runtime}`);
   console.error(`# tier: ${result.tier}`);
   console.error(`# deploymentId: ${result.deploymentId}`);
   console.error(`# gatewayToken: ${result.gatewayToken}`);
   console.error(`# telegramEnabled: ${result.telegramEnabled}`);
   console.error(`# Paste stdout into SecretAI portal's Create New SecretVM compose field.`);
-  console.error(`# Use the gatewayToken above to authenticate the OpenClaw web UI after boot.`);
+  if (result.runtime === "openclaw") {
+    console.error(`# Use the gatewayToken above to authenticate the OpenClaw web UI after boot.`);
+  } else {
+    console.error(`# Hermes dashboard reachable at https://<hostname>/ after boot (Traefik routes 443 -> 9119).`);
+  }
   process.stdout.write(result.compose);
 }
 

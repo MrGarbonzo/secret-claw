@@ -17,8 +17,11 @@ type ValidationState = {
   botUsername?: string;
 };
 
+import { SECRETAI_MODELS, DEFAULT_SECRETAI_MODEL } from "@/lib/types";
+
 type TelegramChoice = "enabled" | "skipped" | null;
 type Tier = "byo" | "secret";
+type Runtime = "openclaw" | "hermes";
 
 interface SectionShellProps {
   id: string;
@@ -78,7 +81,9 @@ function ErrorDetail({ detail }: { detail: string }) {
 export default function CreateAgentPage() {
   const router = useRouter();
 
+  const [runtime, setRuntime] = useState<Runtime>("openclaw");
   const [tier, setTier] = useState<Tier>("byo");
+  const [secretaiModel, setSecretaiModel] = useState<string>(DEFAULT_SECRETAI_MODEL);
   const [secretaiKey, setSecretaiKey] = useState("");
   const [anthropicKey, setAnthropicKey] = useState("");
   const [telegramChoice, setTelegramChoice] = useState<TelegramChoice>(null);
@@ -311,8 +316,10 @@ export default function CreateAgentPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          runtime,
           tier,
           secretaiApiKey: secretaiKey.trim(),
+          secretaiModel: tier === "secret" ? secretaiModel : undefined,
           anthropicApiKey: tier === "byo" ? anthropicKey.trim() : undefined,
           telegramEnabled: telegramChoice === "enabled",
           telegramBotToken: telegramChoice === "enabled" ? botToken.trim() : undefined,
@@ -356,19 +363,37 @@ export default function CreateAgentPage() {
             void onSubmit();
           }}
         >
-          <SectionShell id="section-tier" index={1} title="Tier">
+          <SectionShell id="section-tier" index={1} title="Runtime &amp; Tier">
+            <p className="mb-3 text-[11px] leading-relaxed text-portal-muted">
+              Pick a runtime (OpenClaw or Hermes Agent) and an inference tier
+              (BYO Anthropic key or hosted SecretAI). All four combinations
+              ship the same defaults — Telegram, three pre-installed routines,
+              workspace files, HTTPS.
+            </p>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <SelectionCard
-                title="BYO API"
-                description="You bring an Anthropic API key. Powered by Claude Sonnet 4.6 from Anthropic."
-                selected={tier === "byo"}
-                onClick={() => setTier("byo")}
+                title="OpenClaw + BYO API"
+                description="OpenClaw runtime, Claude Sonnet 4.6 inference (your Anthropic key)."
+                selected={runtime === "openclaw" && tier === "byo"}
+                onClick={() => { setRuntime("openclaw"); setTier("byo"); }}
               />
               <SelectionCard
-                title="Secret"
-                description="Model hosted on SecretAI for end-to-end dual attestation. Powered by gemma4:31b on SecretAI rytn (tool-capable, parallel tool calls, 256K context)."
-                selected={tier === "secret"}
-                onClick={() => setTier("secret")}
+                title="OpenClaw + Secret"
+                description="OpenClaw runtime, SecretAI rytn / gemma4:31b inference (your SecretAI key)."
+                selected={runtime === "openclaw" && tier === "secret"}
+                onClick={() => { setRuntime("openclaw"); setTier("secret"); }}
+              />
+              <SelectionCard
+                title="Hermes + BYO API"
+                description="Hermes Agent v0.14 runtime, Claude Sonnet 4.6 inference (your Anthropic key)."
+                selected={runtime === "hermes" && tier === "byo"}
+                onClick={() => { setRuntime("hermes"); setTier("byo"); }}
+              />
+              <SelectionCard
+                title="Hermes + Secret"
+                description="Hermes Agent v0.14 runtime, SecretAI rytn / gemma4:31b inference (your SecretAI key)."
+                selected={runtime === "hermes" && tier === "secret"}
+                onClick={() => { setRuntime("hermes"); setTier("secret"); }}
               />
             </div>
           </SectionShell>
@@ -442,11 +467,27 @@ export default function CreateAgentPage() {
               id="section-anthropic"
               index={3}
               title="Inference"
-              helper="Secret tier runs inference on SecretAI's attested infrastructure — gemma4:31b on rytn. Uses the same SecretAI key from Section 2; no separate API key needed."
+              helper="Secret tier runs inference on SecretAI's attested rytn endpoint. Uses the same SecretAI key from Section 2; no separate API key needed. Pick a model — gemma4:31b is the verified default; the others are experimental (tool-call quirks possible)."
             >
-              <div className="rounded-md border border-portal-border bg-portal-bg px-3 py-2 text-xs text-portal-muted">
-                <span className="font-mono text-portal-text">secretai-rytn / gemma4:31b</span>
-                <span className="ml-3 text-portal-mutedDim">· 256K context · attested compute</span>
+              <div className="flex flex-col gap-2">
+                <span className="text-[11px] uppercase tracking-wider text-portal-muted">
+                  Model
+                </span>
+                <select
+                  value={secretaiModel}
+                  onChange={(e) => setSecretaiModel(e.target.value)}
+                  className="rounded-md border border-portal-border bg-portal-bg px-3 py-2 font-mono text-xs text-portal-text focus:border-portal-accent focus:outline-none"
+                >
+                  {SECRETAI_MODELS.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.label}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-[11px] leading-relaxed text-portal-mutedDim">
+                  Endpoint: <span className="font-mono text-portal-muted">secretai-rytn</span>
+                  {" · "}256K context · attested compute
+                </p>
               </div>
             </SectionShell>
           )}

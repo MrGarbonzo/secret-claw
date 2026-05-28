@@ -1,0 +1,214 @@
+# Hermes Agent BYO SecretVM deploy template.
+#
+# Wraps the upstream nousresearch/hermes-agent image as a single-service
+# SecretVM compose, following the same shape as our OpenClaw BYO template
+# (validated end-to-end). Hermes's existing s6-overlay PID 1 + stage2-hook
+# stays intact; we only ADD a custom cont-init step that seeds
+# $HERMES_HOME (/opt/data) with config.yaml + .env + cron/jobs.json +
+# workspace files on first boot.
+#
+# Differences from OpenClaw template:
+#   - Image: nousresearch/hermes-agent:latest (Hermes upstream)
+#   - State volume mount: /opt/data (Hermes's $HERMES_HOME)
+#   - Healthcheck: against dashboard at 127.0.0.1:9119 (vs OpenClaw's 18789)
+#   - Seed pattern: doesn't override /init (would skip s6-overlay setup).
+#     Instead the seed script lives at /etc/cont-init.d/01-secret-claw-seed
+#     via configs:, and s6-overlay runs it on boot before services start.
+#   - Files written: config.yaml, .env, cron/jobs.json, SOUL.md, AGENTS.md,
+#     USER.md (different from OpenClaw's openclaw.json + cron-jobs.json +
+#     workspace/AGENTS,IDENTITY,SOUL,USER.md set)
+#
+# HTTPS / Traefik:
+#   Same byte-for-byte Traefik sidecar pattern as OpenClaw's template
+#   (so SecretAI portal's HTTPS toggle wires up correctly). Traefik
+#   routes to Hermes's dashboard on port 9119.
+#
+# SecretVM compose rewriter still:
+#   - Injects `env_file: - usr/.env`. The vars in that file are SecretVM
+#     scaffolding (id_tx_io etc.) and do not collide with our env.
+
+x-hermes-image: &hermes-image
+  nousresearch/hermes-agent:latest
+
+services:
+  hermes-gateway:
+    image: *hermes-image
+    container_name: hermes-gateway-__DEPLOYMENT_ID_SHORT__
+    environment:
+      HERMES_HOME: /opt/data
+      HERMES_UID: "1000"
+      HERMES_GID: "1000"
+      # Activate the dashboard service. Without this, s6 keeps the
+      # dashboard slot supervised-but-permanently-failed and nothing
+      # binds to :9119 — Hermes's stage2 leaves it disabled by default
+      # for headless deployments. We want the web UI for our users.
+      HERMES_DASHBOARD: "true"
+      # Bind to all interfaces inside the container so Traefik (and
+      # the local docker port mapping) can reach it. The dashboard
+      # auto-passes `--insecure` when host != 127.0.0.1.
+      HERMES_DASHBOARD_HOST: "0.0.0.0"
+      HERMES_DASHBOARD_PORT: "9119"
+      # Anthropic key is baked into the rendered .env (which the seed
+      # script writes to /opt/data/.env on first boot), but also passed
+      # via env: as defense-in-depth.
+      ANTHROPIC_API_KEY: __ANTHROPIC_API_KEY__
+      # Telegram credentials — Hermes reads these from process env if
+      # set, otherwise from /opt/data/.env.
+      TELEGRAM_BOT_TOKEN: __TELEGRAM_BOT_TOKEN__
+      TELEGRAM_ALLOWED_USERS: __TELEGRAM_CHAT_ID__
+      TELEGRAM_HOME_CHANNEL: __TELEGRAM_CHAT_ID__
+      TZ: UTC
+    volumes:
+      - hermes_state:/opt/data
+    configs:
+      - source: hermes_seed
+        # `00-` prefix lands lexicographically before the upstream
+        # `01-hermes-setup` hook. Important: Hermes's stage2-hook
+        # `seed_one`s default config.yaml / .env / SOUL.md if they're
+        # absent — so we have to plant ours first, then stage2 sees them
+        # present and skips its own seeding.
+        target: /etc/cont-init.d/00-secret-claw-seed
+        mode: 0755
+    cap_drop:
+      - NET_RAW
+      - NET_ADMIN
+    security_opt:
+      - no-new-privileges:true
+    ports:
+      - "127.0.0.1:9119:9119"
+    # Do NOT set `init: true` here — Hermes's upstream image runs
+    # s6-overlay as PID 1 from /init. Adding docker's tini on top would
+    # bump s6-overlay to PID != 1, which it explicitly refuses
+    # ("s6-overlay-suexec: fatal: can only run as pid 1"). The container
+    # remains reapable because s6-overlay reaps zombies natively.
+    restart: unless-stopped
+    # Don't override entrypoint — the upstream image's
+    # ["/init", "/opt/hermes/docker/main-wrapper.sh"] runs s6-overlay
+    # PID 1 which executes /etc/cont-init.d/00-secret-claw-seed (our
+    # seed) before the upstream `01-hermes-setup` runs. CMD selects
+    # the service.
+    command: ["gateway", "run"]
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - "curl -sf http://127.0.0.1:9119/healthz || curl -sf http://127.0.0.1:9119/ || exit 1"
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 90s
+    networks:
+      - traefik
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.hermes-gateway.rule=Host(`$DOMAIN_NAME`)"
+      - "traefik.http.routers.hermes-gateway.entrypoints=websecure"
+      - "traefik.http.routers.hermes-gateway.tls=true"
+      - "traefik.http.routers.hermes-gateway.priority=1000"
+      - "traefik.http.services.hermes-gateway.loadbalancer.server.port=9119"
+      - "secret-claw.deployment_id=__DEPLOYMENT_ID__"
+      - "secret-claw.runtime=hermes"
+
+  traefik:
+    image: traefik:v2.10
+    command:
+      - --api.insecure=false
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --entrypoints.web.address=:80
+      - --entrypoints.websecure.address=:443
+      - --entrypoints.websecure.http.tls.options=default@file
+      - --providers.file.directory=/etc/traefik/dynamic
+      - --providers.file.watch=true
+    ports:
+      - 80:80
+      - 443:443
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /mnt/secure/cert:/certs:ro
+    networks:
+      - traefik
+    configs:
+      - source: tls_config
+        target: /etc/traefik/dynamic/tls.yml
+
+volumes:
+  hermes_state:
+
+networks:
+  traefik:
+    driver: bridge
+
+configs:
+  tls_config:
+    content: |-
+      tls:
+        certificates:
+          - certFile: /certs/secret_vm_fullchain.pem
+            keyFile: /certs/secret_vm_private.pem
+        stores:
+          default:
+            defaultCertificate:
+              certFile: /certs/secret_vm_fullchain.pem
+              keyFile: /certs/secret_vm_private.pem
+  hermes_seed:
+    content: |
+      #!/bin/sh
+      # Seeds /opt/data (HERMES_HOME) on first boot from base64 blobs
+      # rendered into this script. We land at `00-secret-claw-seed`
+      # so we run BEFORE the upstream `01-hermes-setup` — whose own
+      # `seed_one` calls would otherwise install Hermes's default
+      # config.yaml / .env / SOUL.md and then refuse to overwrite ours.
+      # Idempotent: presence of our sentinel `.secret-claw-seed.done`
+      # skips re-seeding on subsequent boots.
+      #
+      # File layout written here:
+      #   $HERMES_HOME/config.yaml     — provider + gateway config
+      #   $HERMES_HOME/.env            — API keys + Telegram (chmod 600)
+      #   $HERMES_HOME/cron/jobs.json  — scheduled routines
+      #   $HERMES_HOME/SOUL.md         — agent persona (Hermes loads natively)
+      #   $HERMES_HOME/AGENTS.md       — agent bootstrap instructions
+      #   $HERMES_HOME/USER.md         — user profile
+      set -eu
+      HERMES_HOME="${HERMES_HOME:-/opt/data}"
+      mkdir -p "$$HERMES_HOME"
+      if [ ! -f "$$HERMES_HOME/.secret-claw-seed.done" ]; then
+        echo "[secret-claw-seed] populating $$HERMES_HOME"
+        mkdir -p "$$HERMES_HOME/cron"
+        base64 -d > "$$HERMES_HOME/config.yaml" <<'CONFIG_YAML_B64_EOF'
+      __CONFIG_YAML_B64__
+      CONFIG_YAML_B64_EOF
+        base64 -d > "$$HERMES_HOME/.env" <<'ENV_B64_EOF'
+      __ENV_B64__
+      ENV_B64_EOF
+        chmod 600 "$$HERMES_HOME/.env"
+        base64 -d > "$$HERMES_HOME/cron/jobs.json" <<'CRON_JOBS_B64_EOF'
+      __CRON_JOBS_B64__
+      CRON_JOBS_B64_EOF
+        base64 -d > "$$HERMES_HOME/SOUL.md" <<'SOUL_MD_B64_EOF'
+      __SOUL_MD_B64__
+      SOUL_MD_B64_EOF
+        base64 -d > "$$HERMES_HOME/AGENTS.md" <<'AGENTS_MD_B64_EOF'
+      __AGENTS_MD_B64__
+      AGENTS_MD_B64_EOF
+        base64 -d > "$$HERMES_HOME/USER.md" <<'USER_MD_B64_EOF'
+      __USER_MD_B64__
+      USER_MD_B64_EOF
+        # Substitute the assigned hostname into config.yaml's
+        # controlUi.allowedOrigins. $DOMAIN_NAME is compose-interpolated
+        # at SecretVM parse time (mirror of the Traefik label above).
+        SC_HOST="$DOMAIN_NAME"
+        [ -z "$$SC_HOST" ] && SC_HOST="$${VM_HOSTNAME:-}"
+        if [ -n "$$SC_HOST" ]; then
+          sed -i "s|__RUNTIME-VM-HOSTNAME__|$$SC_HOST|g" "$$HERMES_HOME/config.yaml" 2>/dev/null || true
+          echo "[secret-claw-seed] substituted hostname=$$SC_HOST"
+        fi
+        # Drop sentinel so we don't re-seed (and clobber the user's
+        # edits made via the Hermes dashboard) on subsequent boots.
+        touch "$$HERMES_HOME/.secret-claw-seed.done"
+        # chown to the hermes UID — stage2-hook will re-assert this
+        # but belt-and-suspenders for fresh volumes.
+        chown -R "$${HERMES_UID:-1000}:$${HERMES_GID:-1000}" "$$HERMES_HOME"
+        echo "[secret-claw-seed] done"
+      else
+        echo "[secret-claw-seed] sentinel present, skipping (re-seed by removing $$HERMES_HOME/.secret-claw-seed.done)"
+      fi

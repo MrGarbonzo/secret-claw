@@ -1,0 +1,43 @@
+# Hermes Agent — BYO tier config.
+#
+# The Anthropic API key lives in .env (not in this file). Renderer
+# substitutes the VM hostname placeholder at render time. The
+# hostname value is the RUNTIME-VM-HOSTNAME sentinel by default;
+# the seed script in docker-compose.yml `sed`-replaces it with
+# $DOMAIN_NAME at first boot.
+
+model:
+  default: "claude-sonnet-4-6"
+  provider: "anthropic"
+  context_length: 200000
+
+gateway:
+  # Dashboard binds to localhost; Traefik in front handles TLS + Host
+  # routing. Allowed origins includes the assigned VM hostname so the
+  # browser-side dashboard JS can connect via WebSocket.
+  controlUi:
+    allowedOrigins:
+      - "http://localhost:9119"
+      - "http://127.0.0.1:9119"
+      - "https://__VM_HOSTNAME__"
+    # Hermes equivalent of OpenClaw's dangerouslyDisableDeviceAuth —
+    # for single-user attested VMs the gateway token is the sole auth
+    # boundary; per-browser pairing is unnecessary friction. Verify
+    # this is the correct Hermes field name during Phase D VM testing.
+    dangerouslyDisableDeviceAuth: true
+  platforms:
+    telegram:
+      enabled: true
+
+# Pre-grant exec scope — analogous to OpenClaw's tools.exec.security
+# (verify the right Hermes field path during Phase D). The agent
+# needs exec to run "hermes cron add" and similar self-managed
+# operations without per-call user approval.
+tools:
+  exec:
+    security: "full"
+    ask: "off"
+
+# Agent persona / workspace files load from $HERMES_HOME by default:
+# SOUL.md, AGENTS.md, USER.md — same names as OpenClaw's workspace.
+# No additional config needed here; Hermes auto-discovers them.

@@ -154,6 +154,10 @@ export default function AgentDetailPage({ params }: PageProps) {
               rows={[
                 { label: "Agent name", value: "Secret Agent" },
                 {
+                  label: "Runtime",
+                  value: record.runtime === "hermes" ? "Hermes Agent v0.14" : "OpenClaw",
+                },
+                {
                   label: "Tier",
                   value: record.tier === "secret" ? "Secret (SecretAI)" : "BYO API",
                 },
@@ -161,7 +165,7 @@ export default function AgentDetailPage({ params }: PageProps) {
                   label: "Model",
                   value:
                     record.tier === "secret"
-                      ? "gemma4:31b"
+                      ? (record.secretai_model || "gemma4:31b")
                       : "Claude Sonnet 4.6",
                   mono: true,
                 },
@@ -225,7 +229,7 @@ export default function AgentDetailPage({ params }: PageProps) {
                         <span className="text-sm text-portal-muted">(awaiting hostname)</span>
                       )}
                     </div>
-                    {record.gateway_token ? (
+                    {record.gateway_token && record.runtime !== "hermes" ? (
                       <div className="flex flex-col gap-1">
                         <span className="text-[11px] uppercase tracking-wider text-portal-muted">
                           Gateway token
@@ -257,8 +261,9 @@ export default function AgentDetailPage({ params }: PageProps) {
                   </h3>
                   <ul className="flex list-disc flex-col gap-2 pl-5 text-sm text-portal-text">
                     <li>
-                      Open the agent URL above and authenticate with the gateway token to chat with
-                      your agent through the web UI.
+                      {record.runtime === "hermes"
+                        ? "Open the agent URL above to reach the Hermes dashboard and chat with your agent through the web UI."
+                        : "Open the agent URL above and authenticate with the gateway token to chat with your agent through the web UI."}
                     </li>
                     {record.telegram_enabled ? (
                       <li>

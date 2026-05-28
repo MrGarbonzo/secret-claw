@@ -6,8 +6,8 @@
 # production deploy artifact (SecretVM, Fly, generic VM host).
 #
 # Build context is the secret-claw/ repo root, not wizard/ — docker-compose.yml
-# sets `context: ..` so the Dockerfile can COPY both `wizard/` and
-# `deploys/byo/templates/`. To build by hand from secret-claw/:
+# sets `context: ..` so the Dockerfile can COPY both `wizard/` and the
+# `deploys/<runtime>/<tier>/templates/` trees. To build by hand from secret-claw/:
 #
 #   docker build -f wizard/Dockerfile -t secret-claw-wizard .
 #
@@ -26,13 +26,20 @@ FROM node:20-alpine AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY wizard/. ./
-# Pre-populate ./templates/<tier>/ from the canonical deploys/<tier>/templates
-# sources. The npm `prebuild` hook (scripts/copy-templates.mjs) would also do
-# this, but its source path (../deploys/) doesn't exist in this builder
-# stage's filesystem. Copying here lets prebuild see ./templates already
-# populated and skip silently.
-COPY deploys/byo/templates ./templates/byo
-COPY deploys/secret/templates ./templates/secret
+# Pre-populate ./templates/<runtime>/<tier>/ from the canonical
+# deploys/<runtime>/<tier>/templates sources. The npm `prebuild` hook
+# (scripts/copy-templates.mjs) would also do this, but its source path
+# (../deploys/) doesn't exist in this builder stage's filesystem.
+# Copying here lets prebuild see ./templates already populated and skip
+# silently.
+COPY deploys/openclaw/byo/templates ./templates/openclaw/byo
+COPY deploys/openclaw/secret/templates ./templates/openclaw/secret
+# Hermes templates land in Phase B. The COPYs below will fail at build
+# time until the dest directories exist in the source tree — that's
+# desired (early failure if a Hermes-runtime deploy hits a missing
+# template). Uncomment as Hermes templates are added:
+# COPY deploys/hermes/byo/templates ./templates/hermes/byo
+# COPY deploys/hermes/secret/templates ./templates/hermes/secret
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN npm run build
 
@@ -44,9 +51,9 @@ ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV PORT=3000
 ENV HOSTNAME=0.0.0.0
-# render.ts checks this env first; falls back to ../deploys/byo/templates
+# render.ts checks this env first; falls back to ../deploys/<runtime>/<tier>/templates
 # relative to cwd otherwise. Inside the container the templates live at
-# /app/templates, copied in below.
+# /app/templates/<runtime>/<tier>/, copied in below.
 ENV SECRET_CLAW_TEMPLATES_DIR=/app/templates
 
 # Run as a non-root user. Next.js standalone server.js binds the port the

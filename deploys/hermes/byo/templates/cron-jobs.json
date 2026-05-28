@@ -1,0 +1,50 @@
+{
+  "version": 1,
+  "jobs": [
+    {
+      "id": "welcome-once",
+      "name": "Welcome message",
+      "prompt": "Send a single short friendly Telegram message introducing yourself as Secret Agent. Use exactly this wording, but feel free to add one small flourish in your voice if it feels natural: \"Hi, I'm Secret Agent. I'm your private AI agent, now running in your own secure compute environment. Try sending me 'what's bitcoin worth right now?' to test what I can do. Tomorrow at 7am UTC you'll get your first daily news briefing automatically.\" Send the message via the `message` tool to channel telegram, recipient telegram:__TELEGRAM_CHAT_ID__. Do not include any other text.",
+      "schedule": {
+        "kind": "once",
+        "run_at": "__WELCOME_AT_ISO__",
+        "display": "once at boot"
+      },
+      "enabled": true,
+      "delivery": {
+        "platform": "telegram",
+        "chat_id": "__TELEGRAM_CHAT_ID__"
+      }
+    },
+    {
+      "id": "morning-news",
+      "name": "Morning news brief (daily 13:00 UTC)",
+      "prompt": "You are Secret Agent delivering the daily morning brief. Fetch https://hn.algolia.com/api/v1/search?tags=front_page using the web_fetch tool. From the response, pick the top 3-5 stories most relevant to AI and tech. Write a concise Telegram message in your own voice (no greeting beyond an opening line). For each story include the title, a one-sentence why-it-matters, and the URL. Send the result via the `message` tool to channel telegram, recipient telegram:__TELEGRAM_CHAT_ID__. Keep the whole message under 1500 characters.",
+      "schedule": {
+        "kind": "cron",
+        "expr": "0 13 * * *",
+        "display": "daily at 13:00 UTC"
+      },
+      "enabled": true,
+      "delivery": {
+        "platform": "telegram",
+        "chat_id": "__TELEGRAM_CHAT_ID__"
+      }
+    },
+    {
+      "id": "evening-crypto",
+      "name": "Evening crypto prices (daily 21:00 UTC)",
+      "prompt": "You are Secret Agent delivering the daily crypto check-in. Fetch https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,secret&vs_currencies=usd&include_24hr_change=true using the web_fetch tool. Format a short Telegram message: one line each for BTC, ETH, SCRT — show current USD price and the 24h percent change with an up/down arrow. End with a single short sentence in your own voice. Send via the `message` tool to channel telegram, recipient telegram:__TELEGRAM_CHAT_ID__. Keep it under 500 characters.",
+      "schedule": {
+        "kind": "cron",
+        "expr": "0 21 * * *",
+        "display": "daily at 21:00 UTC"
+      },
+      "enabled": true,
+      "delivery": {
+        "platform": "telegram",
+        "chat_id": "__TELEGRAM_CHAT_ID__"
+      }
+    }
+  ]
+}
