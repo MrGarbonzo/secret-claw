@@ -38,6 +38,15 @@ services:
       HERMES_HOME: /opt/data
       HERMES_UID: "1000"
       HERMES_GID: "1000"
+      # Point HOME at a hermes-owned directory. The upstream image
+      # builds with HOME=/root from the Debian base; when s6-setuidgid
+      # switches services to the hermes user it does NOT update HOME,
+      # so Python paths like `Path.home() / ".local/state/..."` (used
+      # by the Telegram adapter's bot-token lock) resolve to /root and
+      # fail with EACCES. The stage2-hook already mkdir-p's
+      # $HERMES_HOME/home owned by hermes; pointing HOME there fixes
+      # the lock-write without touching upstream image semantics.
+      HOME: /opt/data/home
       # Activate the dashboard service. Without this, s6 keeps the
       # dashboard slot supervised-but-permanently-failed and nothing
       # binds to :9119 — Hermes's stage2 leaves it disabled by default
